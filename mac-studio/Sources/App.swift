@@ -191,7 +191,13 @@ final class AppModel: ObservableObject {
     /// 一键修复打印队列: 部署内置arm64驱动+队列重指向当前IP+重装PPD (原桌面"修复打印.command"收编, 2026-10-18)
     func repairPrintQueue() {
         persist()
-        let target = ip
+        let target = ip.trimmingCharacters(in: .whitespaces)
+        // IPv4严格校验(防root命令注入: ip进bash脚本经osascript提权执行, 审查H2)
+        let seg = target.split(separator: ".", omittingEmptySubsequences: false)
+        guard seg.count == 4, seg.allSatisfy({ Int($0).map { 0...255 ~= $0 } == true }) else {
+            message = "❌ IP不合法: \(target)"
+            return
+        }
         message = "修复中…(会弹密码框)"
         DispatchQueue.global().async { [self] in
             // 驱动二进制: SPM开发态取build目录, 部署态取.app内置资源包
@@ -204,7 +210,7 @@ final class AppModel: ObservableObject {
                 ok = false; detail = "找不到驱动二进制 LNTHR1Z.universal"
             } else {
                 let script = fixScript(bin: bin, ip: target)
-                let path = "/tmp/m7208w_fix_\(Int.random(in: 100...999)).sh"
+                let path = "/tmp/.m7208w_fix_\(Int.random(in: 10_000_000...99_999_999)).sh"  // 不可预测路径, 缓解TOCTOU
                 try? script.write(toFile: path, atomically: true, encoding: .utf8)
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -478,7 +484,8 @@ final class AppModel: ObservableObject {
             return
         }
         deviceBusy = true
-        defer { DispatchQueue.main.async { self.deviceBusy = false } }  // 兜底: 任何路径必解锁
+        // 注: 不用defer兜底——函数体async派发后立即返回, defer会瞬间解锁形同虚设;
+        // 完成路径(catch/成功/恢复失败)各自显式解锁(见grep deviceBusy=false)
         scanning = true
         progressBytes = 0
         message = nil

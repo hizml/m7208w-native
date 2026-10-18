@@ -75,7 +75,7 @@ final class ESCLProxy {
                 if error != nil { done(buf.isEmpty ? nil : buf); return }
                 if isComplete || buf.range(of: Data("\r\n\r\n".utf8)) != nil {
                     // 头收齐; POST /ScanJobs还需读body(Content-Length)
-                    if let cl = self.contentLength(of: buf), buf.count < cl + self.headerLen(buf) {
+                    if let cl = self.contentLength(of: buf), buf.count < cl + self.headerLen(buf) + 4 {
                         readMore(); return
                     }
                     done(buf)
@@ -89,7 +89,9 @@ final class ESCLProxy {
         let s = String(data: d, encoding: .utf8) ?? ""
         for line in s.components(separatedBy: "\r\n") {
             if line.lowercased().hasPrefix("content-length:") {
-                return Int(line.split(separator: ":")[1].trimmingCharacters(in: .whitespaces))
+                let parts = line.split(separator: ":", maxSplits: 1)
+                guard parts.count == 2 else { return nil }   // 畸形头防越界(审查L)
+                return Int(parts[1].trimmingCharacters(in: .whitespaces))
             }
         }
         return nil
@@ -220,13 +222,15 @@ final class ESCLProxy {
             guard let cg = ScanDecoder.makeImage(px, width: r.width) else { return .dead }
             return .image(NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height)))
         } catch let e as ScanError {
-            FileHandle.standardError.write("[eSCL] \(e.retryable ? "忙(打印中)" : "死锁")\n".data(using: .utf8)!)
-            return e.retryable ? .busy : .dead
+            // 只有真死锁(.dead)才走重启恢复; refused/timeout=离线或未就绪→按忙等待,
+            // 绝不误判成dead去reboot(空转5分钟+可能打断进行中的CUPS打印) — 验收M8真修
+            if case .dead = e { return .dead }
+            FileHandle.standardError.write("[eSCL] \(e) → 按忙等待\n".data(using: .utf8)!)
+            return .busy
         } catch {
-            return .dead
+            FileHandle.standardError.write("[eSCL] 连接异常(按忙处理, 不重启)\n".data(using: .utf8)!)
+            return .busy
         }
-        // 注: refused/timeout目前与dead同路径; 恢复流程的reboot有consent保护(macOS GUI侧),
-        // eSCL侧无UI, 若误重启率实测偏高再收紧
     }
 
     /// 占位白图(预览缓存未就绪时用, 扫描头不动)

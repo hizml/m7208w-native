@@ -24,32 +24,31 @@ object PrintEngine {
     private fun bitmapToCanvas(bmp: Bitmap, pageHeight: Int, scalePct: Int = 100,
                                density: Int = 0, tonerSave: Boolean = false): ByteArray {
         val canvas = ByteArray(pageHeight * CANVAS_BPL)
-        // 先把bitmap按目标尺寸缩放到画布中央(600dpi等效)
         val scale = minOf(CANVAS_W.toFloat() / bmp.width, pageHeight.toFloat() / bmp.height, 8f) * (scalePct.coerceIn(25, 400) / 100f)
         val tw = (bmp.width * scale).toInt().coerceAtMost(CANVAS_W)
         val th = (bmp.height * (tw.toFloat() / bmp.width)).toInt().coerceAtMost(pageHeight)
         val scaled = Bitmap.createScaledBitmap(bmp, tw, th, true)
-        val px = IntArray(tw * th)
-        scaled.getPixels(px, 0, tw, 0, 0, tw, th)
         val offX = (CANVAS_W - tw) / 2
         val offY = (pageHeight - th) / 2
+        // 逐行取像素+行缓冲复用(峰值内存: 1行像素+误差行, 修OOM审查H1)
+        val rowBuf = IntArray(tw)
         var cur = IntArray(tw)
         var next = IntArray(tw)
         for (y in 0 until th) {
+            scaled.getPixels(rowBuf, 0, tw, 0, y, tw, 1)
             val rowY = offY + y
-            if (rowY < 0 || rowY >= pageHeight) continue
             java.util.Arrays.fill(next, 0)
             for (x in 0 until tw) {
-                val p = px[y * tw + x]
-                    var g = ((p shr 16 and 0xFF) * 30 + ((p shr 8) and 0xFF) * 59 + (p and 0xFF) * 11) / 100
-                if (density != 0) {  // 浓度±3: gamma式调节
+                val p = rowBuf[x]
+                var g = ((p shr 16 and 0xFF) * 30 + ((p shr 8) and 0xFF) * 59 + (p and 0xFF) * 11) / 100
+                if (density != 0) {
                     val f = 1.0 + 0.12 * density
                     val d = g * f + (255 - 255 * f) / 2
                     g = d.toInt().coerceIn(0, 255)
                 }
                 val v = g + cur[x]
-                val thr = if (tonerSave) 98 else 128   // 省墨=阈值下移→黑点更少
-                val bit = v < thr   // 暗→黑
+                val thr = if (tonerSave) 98 else 128
+                val bit = v < thr
                 if (x + 1 < tw) cur[x + 1] += (if (bit) v else v - 255) * 7 / 16
                 if (x > 0) next[x - 1] += (if (bit) v else v - 255) * 3 / 16
                 next[x] += (if (bit) v else v - 255) * 5 / 16
@@ -60,8 +59,8 @@ object PrintEngine {
                 }
             }
             val t = cur; cur = next; next = t
-            java.util.Arrays.fill(next, 0)
         }
+        scaled.recycle()   // 及时回收缩放位图
         return canvas
     }
 
@@ -81,12 +80,12 @@ object PrintEngine {
     enum class PrintPaper(val label: String, val h600: Int, val wmm10: Int, val hmm10: Int, val code: Int) {
         A4("A4", 7016, 2100, 2970, 2),
         LETTER("Letter", 6600, 2159, 2794, 1),
-        B5("B5", 8300, 1760, 2500, 2),
+        B5("B5", 5906, 1760, 2500, 2),
         A5("A5", 4950, 1480, 2100, 2),
-        B6("B6", 4950, 1250, 1760, 2),
+        B6("B6", 4157, 1250, 1760, 2),
         A6("A6", 3490, 1050, 1480, 2),
-        K16("16K", 6900, 1930, 2700, 2),
-        EXEC("Executive", 6450, 1841, 2667, 2);
+        K16("16K", 6378, 1930, 2700, 2),
+        EXEC("Executive", 6298, 1841, 2667, 2);
     }
     enum class PrintMedia(val label: String, val code: Int) {
         PLAIN("普通纸", 1), RECYCLED("再生纸", 2), THICK("厚纸", 3), THIN("薄纸", 4), LABEL("标签", 5)
@@ -123,12 +122,12 @@ object PrintEngine {
         val cv = Canvas(bmp); cv.drawColor(Color.WHITE)
         val p = Paint(Paint.FILTER_BITMAP_FLAG)
         // A4@150dpi: 1240×1754; 身份证 85.6×54mm → 506×319px
-        val cw = 506 * 2.2f; val chh = 319 * 2.2f
+        val cw = 506 * 1.9f; val chh = 319 * 1.9f
         for ((idx, b) in listOf(front, back).withIndex()) {
             val s = minOf(cw / b.width, chh / b.height)
             val w = b.width * s; val h = b.height * s
             val x = (1240 - w) / 2
-            val y = 1754 * 0.22f + idx * (chh + 80)
+            val y = 1754 * 0.08f + idx * (chh + 80)
             cv.drawBitmap(b, null, android.graphics.RectF(x, y, x + w, y + h), p)
         }
         return bmp

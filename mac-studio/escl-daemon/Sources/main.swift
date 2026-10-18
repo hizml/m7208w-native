@@ -1,6 +1,8 @@
 import Foundation
 import AppKit
 
+signal(SIGPIPE, SIG_IGN)   // RST后send()会SIGPIPE杀进程(与主App同款防护, 审查M5)
+
 // M7208W eSCL 守护进程 —— 开机自启的系统级扫描服务
 // (图像捕捉/预览 7x24 可见扫描仪, 无需打开主App)
 

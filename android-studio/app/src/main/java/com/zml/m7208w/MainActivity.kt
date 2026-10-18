@@ -76,6 +76,19 @@ class MainActivity : Activity() {
         if (ipEdit.text.isBlank()) findPrinter() else refreshStatus()
     }
 
+
+    /// 大图降采样解码(边>maxSide按2的幂降, 防多页打印OOM; 审查M2缓解)
+    private fun decodeSampled(uri: Uri, maxSide: Int): Bitmap? {
+        return try {
+            val opt = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opt) }
+            var sample = 1
+            while (opt.outWidth / sample > maxSide || opt.outHeight / sample > maxSide) sample *= 2
+            val d = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, d) }
+        } catch (e: Exception) { null }
+    }
+
     private fun ip(): String = ipEdit.text.toString().trim().ifEmpty { "192.168.1.100" }
 
     // ==================== Tab 切换 ====================
@@ -171,11 +184,11 @@ class MainActivity : Activity() {
                     mime.startsWith("text/") || lower.endsWith(".txt") ->
                         PrintEngine.txtToBitmaps(contentResolver, uri)
                     mime.startsWith("image/") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ->
-                        listOf(MediaStore.Images.Media.getBitmap(contentResolver, uri))
-                    else -> listOf(MediaStore.Images.Media.getBitmap(contentResolver, uri))
+                        listOfNotNull(decodeSampled(uri, 3200))
+                    else -> listOfNotNull(runCatching { MediaStore.Images.Media.getBitmap(contentResolver, uri) }.getOrNull())
                 }
                 runOnUiThread {
-                    printPages = pages
+                    printPages = pages.filterNotNull()
                     f<android.widget.LinearLayout>(R.id.previewCard).visibility = View.VISIBLE
                     f<TextView>(R.id.previewTitle).text = name.substringAfterLast('/') +
                         if (pages.size > 1) " (${pages.size}页)" else ""
@@ -336,6 +349,7 @@ class MainActivity : Activity() {
                 val processed = Decoder.postProcess(raw, width, options.mode, options.density)
                 val bmp = toBitmap(processed, width)
                 lastBitmap = bmp
+                lastSavedUri = null   // 新扫描作废旧分享目标(审查M6)
                 runOnUiThread {
                     deviceBusy = false
                     preview.setImageBitmap(bmp)
@@ -345,7 +359,7 @@ class MainActivity : Activity() {
                     saveBtn.isEnabled = true
                     progress.visibility = View.GONE
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {   // 含OOM等Error, 防deviceBusy永久锁死(审查M1)
                 runOnUiThread {
                     deviceBusy = false
                     statusText.text = "失败: ${friendly(e)}"
@@ -366,7 +380,7 @@ class MainActivity : Activity() {
         return false
     }
 
-    private fun friendly(e: Exception): String = when (e) {
+    private fun friendly(e: Throwable): String = when (e) {
         is ScanException -> when (e.kind) {
             ScanException.Kind.BUSY -> "打印机忙, 稍候重试"
             ScanException.Kind.REFUSED -> "无法连接扫描服务, 检查IP或重启打印机"
@@ -610,17 +624,18 @@ class MainActivity : Activity() {
             100, 101, 102, 103, 105 -> loadPrintPages(uri, name)
             104 -> { // 证件正面 → 继续选反面
                 try {
-                    pendingCertFront = MediaStore.Images.Media.getBitmap(contentResolver, uri)
+                    pendingCertFront = decodeSampled(uri, 2000)
                     toast("再选反面照片")
                     pick("image/*", 106, "证件反面")
                 } catch (e: Exception) { statusText.text = "❌ ${e.message}" }
             }
             106 -> { // 证件反面 → 合成
                 try {
-                    val back = MediaStore.Images.Media.getBitmap(contentResolver, uri)
+                    val back = decodeSampled(uri, 2000)
                     val front = pendingCertFront
-                    if (front != null) {
+                    if (front != null && back != null) {
                         printPages = listOf(PrintEngine.composeCertificate(front, back))
+                        pendingCertFront = null   // 用完即清, 防残留串台(审查L)
                         f<android.widget.LinearLayout>(R.id.previewCard).visibility = View.VISIBLE
                         f<TextView>(R.id.previewTitle).text = "证件打印 (正反合成)"
                         showPage(0); setCopies(1)

@@ -222,7 +222,8 @@ struct PrinterStatus {
 
     /// 抓Web状态页: (墨粉%, 已印页, 标准页)
     static func webStatus(ip: String) -> (Int, Int, Int)? {
-        var request = URLRequest(url: URL(string: "https://\(ip)/status.asp")!)
+        guard let u = URL(string: "https://\(ip)/status.asp") else { return nil }
+        var request = URLRequest(url: u)
         request.timeoutInterval = 5
         let sem = DispatchSemaphore(value: 0)
         var out: (Int, Int, Int)? = nil
@@ -406,6 +407,8 @@ enum LanScanner {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }
+        let fl = fcntl(fd, F_GETFL, 0)          // 真非阻塞(审查H3: 否则SYN被吞时connect阻塞~75s)
+        guard fl >= 0, fcntl(fd, F_SETFL, fl | O_NONBLOCK) == 0 else { return false }
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         addr.sin_family = sa_family_t(AF_INET)
@@ -417,6 +420,7 @@ enum LanScanner {
             }
         }
         if rc != 0 {
+            guard errno == EINPROGRESS else { return false }
             var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
             guard poll(&pfd, 1, timeoutMs) > 0 else { return false }
         }
