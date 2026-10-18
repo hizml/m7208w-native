@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="12dp">
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Spinner android:id="@+id/paperSpinner" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/dpiSpinner" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Spinner android:id="@+id/modeSpinner" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/scanFmtSpinner" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+        <TextView android:id="@+id/densityLabel" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="浓度: 0"/>
+        <SeekBar android:id="@+id/densitySeek" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:max="254" android:progress="127"/>
+        <TextView android:id="@+id/brightLabel" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="亮度: 0"/>
+        <SeekBar android:id="@+id/brightSeek" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:max="254" android:progress="127"/>
+        <TextView android:id="@+id/contrastLabel" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="对比度: 0"/>
+        <SeekBar android:id="@+id/contrastSeek" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:max="254" android:progress="127"/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/scanBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="🔍 开始扫描" android:textSize="15sp"/>
+            <Button android:id="@+id/shareScanBtn" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="分享" android:textSize="13sp"/>
+        </LinearLayout>
+        <TextView android:id="@+id/scanProgText" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="" android:textSize="12sp"/>
+    </LinearLayout>
+    </ScrollView>
+    <ProgressBar android:id="@+id/progress" android:layout_width="match_parent"
+        android:layout_height="wrap_content" style="?android:attr/progressBarStyleHorizontal"
+        android:visibility="gone"/>
+    <ImageView android:id="@+id/preview" android:layout_width="match_parent"
+        android:layout_height="220dp" android:scaleType="fitCenter" android:background="#EEEEEE"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/saveBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="💾 存图片"/>
+        <Button android:id="@+id/addPdfBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="➕ 加入PDF"/>
+        <Button android:id="@+id/exportPdfBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="📄 导出PDF"/>
+    </LinearLayout>
+</LinearLayout>

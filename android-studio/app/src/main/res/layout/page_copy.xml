@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="12dp"
+    android:background="#FFFFFF">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="份数" android:textSize="14sp"/>
+        <Button android:id="@+id/copyMinus2" android:text="−" android:minWidth="0dp"
+            android:padding="12dp" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:layout_marginLeft="10dp"/>
+        <TextView android:id="@+id/copyCount2" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:gravity="center" android:text="1"
+            android:textSize="16sp" android:textStyle="bold"/>
+        <Button android:id="@+id/copyPlus2" android:text="＋" android:minWidth="0dp"
+            android:padding="12dp" android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+    <CheckBox android:id="@+id/certCopyChk" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="证件复印 (按提示先正面后反面)"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Spinner android:id="@+id/copyDpiSpinner" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <Spinner android:id="@+id/copyModeSpinner" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Spinner android:id="@+id/srcPaperSpinner" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <Spinner android:id="@+id/dstPaperSpinner" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Spinner android:id="@+id/mediaSpinner" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <Spinner android:id="@+id/nupSpinner" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="缩放%"/>
+        <EditText android:id="@+id/scaleEdit" android:layout_width="70dp" android:layout_height="wrap_content"
+            android:inputType="number" android:text="100"/>
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="浓度" android:layout_marginLeft="14dp"/>
+        <SeekBar android:id="@+id/copyDensitySeek" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:max="6" android:progress="3"/>
+    </LinearLayout>
+    <Button android:id="@+id/copyGoBtn" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="🖨 开始复印" android:layout_marginTop="10dp" android:textSize="15sp"/>
+</LinearLayout>
+</ScrollView>

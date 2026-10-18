@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="#F5F6F8">
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:background="#1E88E5" android:padding="10dp">
+        <View android:id="@+id/statusLight" android:layout_width="12dp" android:layout_height="12dp"
+            android:background="@drawable/light_color"/>
+        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="M7208W Studio" android:textColor="#FFFFFF" android:textSize="18sp"
+            android:textStyle="bold" android:paddingLeft="10dp"/>
+        <EditText android:id="@+id/ipEdit" android:layout_width="110dp"
+            android:layout_height="wrap_content" android:hint="打印机IP"
+            android:inputType="text" android:textSize="12sp"/>
+        <Button android:id="@+id/findBtn" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="找" android:textSize="12sp"
+            android:minWidth="0dp" android:paddingLeft="8dp" android:paddingRight="8dp"/>
+    </LinearLayout>
+
+    <RadioGroup android:id="@+id/tabBar" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:background="#FFFFFF"
+        android:paddingTop="2dp" android:paddingBottom="2dp">
+        <RadioButton android:id="@+id/tabPrint" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="打印" android:textSize="15sp"
+            android:button="@null" android:gravity="center" android:padding="8dp"
+            android:checked="true" android:textColor="@color/tab_color"/>
+        <RadioButton android:id="@+id/tabCopy" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="复印" android:textSize="15sp"
+            android:button="@null" android:gravity="center" android:padding="8dp"
+            android:textColor="@color/tab_color"/>
+        <RadioButton android:id="@+id/tabScan" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="扫描" android:textSize="15sp"
+            android:button="@null" android:gravity="center" android:padding="8dp"
+            android:textColor="@color/tab_color"/>
+        <RadioButton android:id="@+id/tabSettings" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="设置" android:textSize="15sp"
+            android:button="@null" android:gravity="center" android:padding="8dp"
+            android:textColor="@color/tab_color"/>
+    </RadioGroup>
+
+    <FrameLayout android:id="@+id/content" android:layout_width="match_parent"
+        android:layout_height="0dp" android:layout_weight="1">
+        <include android:id="@+id/pagePrint" layout="@layout/page_print"/>
+        <include android:id="@+id/pageCopy" layout="@layout/page_copy" android:visibility="gone"/>
+        <include android:id="@+id/pageScan" layout="@layout/page_scan" android:visibility="gone"/>
+        <include android:id="@+id/pageSettings" layout="@layout/page_settings" android:visibility="gone"/>
+    </FrameLayout>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:background="#FFFFFF" android:padding="8dp">
+        <TextView android:id="@+id/statusText" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="Lenovo M7208W — 检查中…"
+            android:textSize="13sp" android:singleLine="true"/>
+        <TextView android:id="@+id/tonerLabel" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="墨粉 --" android:textSize="12sp"/>
+        <ProgressBar android:id="@+id/tonerBar" style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="70dp" android:layout_height="12dp" android:paddingLeft="6dp"
+            android:max="100" android:progress="0"/>
+    </LinearLayout>
+</LinearLayout>

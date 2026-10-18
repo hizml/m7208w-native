@@ -1,0 +1,10 @@
+.build/
+build/
+.cxx/
+.gradle/
+*.apk
+*.zip
+local.properties
+.DS_Store
+mac-studio/Sources/LNTHR1Z.universal
+mac-studio/Sources/M7208WeSCL

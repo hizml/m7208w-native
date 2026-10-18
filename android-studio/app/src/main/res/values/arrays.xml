@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="dpi_list">
+        <item>300 DPI</item>
+        <item>600 DPI</item>
+    </string-array>
+</resources>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="12dp" android:background="#FFFFFF">
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="打印机 WiFi" android:textSize="15sp" android:textStyle="bold"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/wifiReadBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="读取WiFi" android:textSize="13sp"/>
+        <Button android:id="@+id/wifiScanBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="扫描网络" android:textSize="13sp"/>
+    </LinearLayout>
+    <EditText android:id="@+id/newSSID" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="新SSID"/>
+    <EditText android:id="@+id/newPass" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="新密码"/>
+    <Spinner android:id="@+id/wifiEncSpinner" android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+    <Button android:id="@+id/wifiWriteBtn" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="写入WiFi配置" android:textSize="13sp"/>
+    <TextView android:id="@+id/wifiInfoText" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="" android:textSize="12sp"/>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="墨粉维护" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/tonerReadBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="读状态" android:textSize="13sp"/>
+        <Button android:id="@+id/tonerContBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="尽粉继续印" android:textSize="13sp"/>
+        <Button android:id="@+id/tonerResetBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="重置计数" android:textSize="13sp"/>
+    </LinearLayout>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="设备" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/rebootBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="重启打印机" android:textSize="13sp"/>
+        <Button android:id="@+id/refreshBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="刷新状态" android:textSize="13sp"/>
+    </LinearLayout>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="M7208W Studio v6.0 · arm64原生 · 独立复刻\n打印协议: LHPL逆向 · 扫描: 53010/53011 · 非联想官方"
+        android:textSize="11sp" android:textColor="#999999" android:layout_marginTop="20dp"/>
+</LinearLayout>
+</ScrollView>
