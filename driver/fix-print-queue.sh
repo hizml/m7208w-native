@@ -64,7 +64,7 @@ PPD
 sed -i '' 's|\*CloseUI: \*PageSize"|\*CloseUI: \*PageSize|' "/etc/cups/ppd/${Q}.ppd"
 chown root:_lp "/etc/cups/ppd/${Q}.ppd"; chmod 644 "/etc/cups/ppd/${Q}.ppd"
 # 建队列
-lpadmin -p "$Q" -v "socket://${PRINTER_IP:=192.168.1.100}:9100" -P "/etc/cups/ppd/${Q}.ppd" -D "Lenovo M7208W" -o printer-error-policy=retry-job
+lpadmin -p "$Q" -v "socket://192.168.1.100:9100" -P "/etc/cups/ppd/${Q}.ppd" -D "Lenovo M7208W" -o printer-error-policy=retry-job
 cupsenable "$Q"
 cupsaccept "$Q"
 killall -HUP cupsd 2>/dev/null || true
