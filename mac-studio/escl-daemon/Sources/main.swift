@@ -6,7 +6,7 @@ import AppKit
 
 // 跟随主App的IP设置(读主App的偏好域), 变化自动热更新
 let appDefaults = UserDefaults(suiteName: "com.zml.m7208wstudio") ?? .standard
-var ip = appDefaults.string(forKey: "printerIP") ?? "192.168.1.100"
+var ip = appDefaults.string(forKey: "printerIP") ?? "192.168.31.128"
 ESCLProxy.shared.start(ip: ip)
 print("M7208W eSCL daemon: 服务已启动 :8090 (打印机 \(ip))")
 

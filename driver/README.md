@@ -8,7 +8,7 @@
 ## 编译
 
 ```bash
-cd jbigkit-2.1 && ./configure && make   # 产出 libjbig/libjbig.a
+make -C jbigkit-2.1/libjbig        # 产出 libjbig/libjbig.a
 cd ..
 cc -O2 -arch arm64 -o rastertolhpl rastertolhpl.c \
    -I jbigkit-2.1/libjbig jbigkit-2.1/libjbig/libjbig.a -lcups

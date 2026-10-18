@@ -1,0 +1,62 @@
+name: build
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - name: Build debug APK
+        working-directory: android-studio
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Rename
+        run: cp android-studio/app/build/outputs/apk/debug/app-debug.apk M7208W-Studio-android.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: M7208W-Studio-android, path: M7208W-Studio-android.apk }
+
+  macos:
+    name: macOS App + Driver
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build resources (driver + eSCL daemon)
+        working-directory: mac-studio
+        run: ./build-resources.sh
+      - name: Build app
+        working-directory: mac-studio
+        run: swift build -c release
+      - name: Package .app
+        run: |
+          APP="build/M7208W Studio.app/Contents"
+          mkdir -p "$APP/MacOS" "$APP/Resources"
+          cp mac-studio/.build/release/M7208WStudio "$APP/MacOS/"
+          cp -R mac-studio/.build/release/M7208WStudio_M7208WStudio.bundle "$APP/Resources/"
+          cp mac-studio/escl-daemon/.build/release/M7208WESCL "$APP/Resources/M7208WeSCL"
+          cat > "$APP/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleDisplayName</key><string>M7208W Studio</string>
+            <key>CFBundleExecutable</key><string>M7208WStudio</string>
+            <key>CFBundleIdentifier</key><string>com.zml.m7208wstudio</string>
+            <key>CFBundleName</key><string>M7208W Studio</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.1</string>
+            <key>LSMinimumSystemVersion</key><string>13.0</string>
+            <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+          </dict></plist>
+          PLIST
+          sed -i '' 's/^          //' "$APP/Info.plist"
+          cd build && ditto -c -k --sequesterRsrc --keepParent "M7208W Studio.app" "M7208W-Studio-macOS.zip"
+      - name: Driver binary artifact
+        run: cp mac-studio/Sources/LNTHR1Z.universal LNTHR1Z.arm64
+      - uses: actions/upload-artifact@v4
+        with: { name: M7208W-Studio-macOS, path: build/M7208W-Studio-macOS.zip }
+      - uses: actions/upload-artifact@v4
+        with: { name: LNTHR1Z-driver-arm64, path: LNTHR1Z.arm64 }
