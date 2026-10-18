@@ -1,6 +1,8 @@
 name: build
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -59,3 +61,28 @@ jobs:
         with: { name: M7208W-Studio-macOS, path: build/M7208W-Studio-macOS.zip }
       - uses: actions/upload-artifact@v4
         with: { name: LNTHR1Z-driver-arm64, path: LNTHR1Z.arm64 }
+
+  release:
+    name: Release (tag)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 收集产物
+        uses: actions/download-artifact@v4
+        with: { merge-multiple: true, path: dist }
+      - name: 建 Release 并挂产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          mv M7208W-Studio-android.apk "M7208W-Studio-android-${GITHUB_REF_NAME}.apk" || true
+          mv M7208W-Studio-macOS.zip "M7208W-Studio-macOS-${GITHUB_REF_NAME}.zip" || true
+          mv LNTHR1Z.arm64 "LNTHR1Z-driver-arm64-${GITHUB_REF_NAME}" || true
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "M7208W Studio $GITHUB_REF_NAME" \
+            --generate-notes \
+            *.apk *.zip LNTHR1Z-*
