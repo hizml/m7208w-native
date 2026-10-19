@@ -52,6 +52,20 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // 全面屏适配(targetSdk35强制边到边): 顶部让开状态栏, 底部让开手势条/导航栏
+        val root = findViewById<android.view.View>(R.id.rootLayout)
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                v.setPadding(0, bars.top, 0, bars.bottom)
+                android.view.WindowInsets.CONSUMED
+            } else {
+                @Suppress("DEPRECATION")
+                v.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
+                insets.consumeSystemWindowInsets()
+            }
+        }
+
         statusText = findViewById(R.id.statusText)
         statusLight = findViewById(R.id.statusLight)
         tonerLabel = findViewById(R.id.tonerLabel)
