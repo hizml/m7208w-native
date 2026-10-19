@@ -45,7 +45,8 @@
             android:layout_height="wrap_content" android:text="刷新状态" android:textSize="13sp"/>
     </LinearLayout>
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="M7208W Studio v6.0 · arm64原生 · 独立复刻\n打印协议: LHPL逆向 · 扫描: 53010/53011 · 非联想官方"
+        android:id="@+id/aboutText"
+        android:text="M7208W Studio · arm64原生 · 独立复刻\n打印协议: LHPL逆向 · 扫描: 53010/53011 · 非联想官方"
         android:textSize="11sp" android:textColor="#999999" android:layout_marginTop="20dp"/>
 </LinearLayout>
 </ScrollView>

@@ -552,6 +552,12 @@ class MainActivity : Activity() {
                 .setNegativeButton("取消", null).show()
         }
         f<Button>(R.id.refreshBtn).setOnClickListener { refreshStatus() }
+        // 关于区: 运行时读真实版本号(10-19用户要求, 版本不再写死)
+        val ver = try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            "v${pi.versionName}"
+        } catch (_: Exception) { "" }
+        f<TextView>(R.id.aboutText).text = "M7208W Studio $ver · arm64原生 · 独立复刻\n打印协议: LHPL逆向 · 扫描: 53010/53011 · 非联想官方"
     }
 
     private fun tonerAction(which: Int) {
