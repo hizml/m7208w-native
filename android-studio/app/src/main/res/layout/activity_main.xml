@@ -53,7 +53,11 @@
         android:background="#FFFFFF" android:padding="8dp">
         <TextView android:id="@+id/statusText" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="Lenovo M7208W — 检查中…"
-            android:textSize="13sp" android:singleLine="true"/>
+            android:textSize="12sp" android:maxLines="3" android:ellipsize="end"/>
+        <TextView android:id="@+id/busyText" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="⏳任务中"
+            android:textColor="#f59e0b" android:textSize="12sp" android:textStyle="bold"
+            android:visibility="gone"/>
         <TextView android:id="@+id/tonerLabel" android:layout_width="wrap_content"
             android:layout_height="wrap_content" android:text="墨粉 --" android:textSize="12sp"/>
         <ProgressBar android:id="@+id/tonerBar" style="?android:attr/progressBarStyleHorizontal"

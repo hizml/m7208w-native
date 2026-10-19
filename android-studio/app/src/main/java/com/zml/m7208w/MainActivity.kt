@@ -91,6 +91,33 @@ class MainActivity : Activity() {
 
     private fun ip(): String = ipEdit.text.toString().trim().ifEmpty { "192.168.1.100" }
 
+    /// 任务锁统一入口: 置位+底部指示灯 (10-19: 原来裸写deviceBusy无任何可见状态)
+    private fun busy(on: Boolean) {
+        deviceBusy = on
+        runOnUiThread {
+            f<TextView>(R.id.busyText).visibility = if (on) View.VISIBLE else View.GONE
+        }
+    }
+
+    /// 轮询打印机真实状态, 干完活才解锁 (替代写死的90秒锁——打印早结束也白锁一分半)
+    /// 忙=Printing/Copying/Busy/Warming; Ready/Power Saving=完成; 超时5分钟兜底解锁
+    private fun unlockWhenIdle() {
+        val target = ip()
+        Thread {
+            Thread.sleep(10_000)   // 给任务起飞
+            val deadline = System.currentTimeMillis() + 290_000
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(5_000)
+                val st = StatusPage.deviceStatus(target)
+                if (st == null) continue                    // 查询失败继续等
+                val busyNow = st.contains("Print", true) || st.contains("Copy", true)
+                        || st.contains("Warm", true) || st.contains("Busy", true)
+                if (!busyNow) break
+            }
+            busy(false)
+        }.start()
+    }
+
     // ==================== Tab 切换 ====================
     private fun setupTabs() {
         val pages: Map<Int, View> = mapOf(
@@ -215,7 +242,7 @@ class MainActivity : Activity() {
         }
         val density = f<SeekBar>(R.id.densityPSeek).progress - 3
         val tonerSave = f<CheckBox>(R.id.tonerSaveChk).isChecked
-        deviceBusy = true
+        busy(true)
         statusText.text = "打印处理中… (${printPages.size}页×${printCopies}份)"
         Thread {
             try {
@@ -223,14 +250,14 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (ok) {
                         statusText.text = "✅ 已发送打印 — 完成前请勿扫描/复印"
-                        Thread { Thread.sleep(90_000); runOnUiThread { deviceBusy = false } }.start()
+                        unlockWhenIdle()   // 轮询真实状态解锁(替代90秒死锁)
                     } else {
-                        deviceBusy = false
+                        busy(false)
                         statusText.text = "❌ 打印失败(检查IP/打印机状态)"
                     }
                 }
             } catch (e: Throwable) {
-                runOnUiThread { deviceBusy = false; statusText.text = "❌ ${e.message}" }
+                runOnUiThread { busy(false); statusText.text = "❌ ${e.message}" }
             }
         }.start()
     }
@@ -260,7 +287,7 @@ class MainActivity : Activity() {
                       else NupMode.values().getOrNull(nupSel) ?: NupMode.OFF
             val textMode = f<Spinner>(R.id.copyModeSpinner).selectedItemPosition == 0
             if (deviceBusy) { statusText.text = "⏳ 打印机正忙, 请等当前任务完成"; return@setOnClickListener }
-            deviceBusy = true
+            busy(true)
             val o = CopyOptions(copies = copies, scale = scale.coerceIn(25, 400), dpi = dpi,
                 src = src, dst = dst, nup = nup, media = media, textMode = textMode,
                 density = f<SeekBar>(R.id.copyDensitySeek).progress)
@@ -272,11 +299,11 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (ok) {
                             statusText.text = "✅ 复印已受理 (${o.copies}份) — 完成前请勿扫描"
-                            Thread { Thread.sleep(90_000); runOnUiThread { deviceBusy = false } }.start()
-                        } else { deviceBusy = false; statusText.text = "❌ 复印被拒绝" }
+                            unlockWhenIdle()   // 轮询真实状态解锁(替代90秒死锁)
+                        } else { busy(false); statusText.text = "❌ 复印被拒绝" }
                     }
                 } catch (e: Throwable) {
-                    runOnUiThread { deviceBusy = false; statusText.text = "❌ ${e.message}" }
+                    runOnUiThread { busy(false); statusText.text = "❌ ${e.message}" }
                 }
             }.start()
         }
@@ -319,7 +346,7 @@ class MainActivity : Activity() {
         options.dpi = listOf(300, 600)[f<Spinner>(R.id.dpiSpinner).selectedItemPosition]
         getPreferences(MODE_PRIVATE).edit().putString("ip", ip()).apply()
         if (deviceBusy) { statusText.text = "⏳ 打印机正忙, 请等当前任务完成"; return }
-        deviceBusy = true
+        busy(true)
         scanBtn.isEnabled = false
         progress.visibility = View.VISIBLE
         statusText.text = "扫描中…"
@@ -351,7 +378,7 @@ class MainActivity : Activity() {
                 lastBitmap = bmp
                 lastSavedUri = null   // 新扫描作废旧分享目标(审查M6)
                 runOnUiThread {
-                    deviceBusy = false
+                    busy(false)
                     preview.setImageBitmap(bmp)
                     preview.visibility = View.VISIBLE
                     statusText.text = "扫描完成 (${width}×${processed.size / width})"
@@ -361,7 +388,7 @@ class MainActivity : Activity() {
                 }
             } catch (e: Throwable) {   // 含OOM等Error, 防deviceBusy永久锁死(审查M1)
                 runOnUiThread {
-                    deviceBusy = false
+                    busy(false)
                     statusText.text = "失败: ${friendly(e)}"
                     scanBtn.isEnabled = true
                     saveBtn.isEnabled = lastBitmap != null

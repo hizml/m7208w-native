@@ -165,20 +165,48 @@ object TonerStatus {
             conn.connectTimeout = 5000; conn.readTimeout = 5000
             val html = conn.inputStream.bufferedReader().readText()
             conn.disconnect()
-            val parts = html.replace(Regex("<[^>]+>"), "|")
+            // 先解码HTML实体: 20&#37; → 20% (旧码取全部数字会得2037 → "墨粉2037%"bug)
+            val decoded = html
+                .replace("&#37;", "%").replace("&#32;", " ").replace("&#58;", ":")
+                .replace("&#40;", "(").replace("&#41;", ")").replace("&amp;", "&")
+            val parts = decoded.replace(Regex("<[^>]+>"), "|")
                 .split("|").map { it.trim() }.filter { it.isNotEmpty() }
             fun valueAfter(kw: String): Int {
                 for (i in parts.indices) if (parts[i].contains(kw)) {
                     for (j in i + 1 until minOf(i + 4, parts.size)) {
-                        val digits = parts[j].filter { it.isDigit() }
-                        if (digits.isNotEmpty()) return digits.toInt()
+                        val m = Regex("^\\d+").find(parts[j].replace("%", "")) ?: continue
+                        return m.value.toInt()
                     }
                 }
                 return 0
             }
-            val t = valueAfter("Toner Volume")
+            val t = valueAfter("Toner Volume").coerceAtMost(100)   // 保险: 墨粉不可能>100
             if (t == 0) null
             else Triple(t, valueAfter("Print Page Number of Current"), valueAfter("Standard Page Number of Current"))
+        } catch (_: Exception) { null }
+    }
+}
+
+/// 设备状态页 Device Status 值(如 Printing/Ready/Power Saving), 供"任务真完成"轮询用
+object StatusPage {
+    fun deviceStatus(ip: String): String? {
+        return try {
+            val trustAll = object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(c: Array<java.security.cert.X509Certificate>, a: String) {}
+                override fun checkServerTrusted(c: Array<java.security.cert.X509Certificate>, a: String) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            }
+            val sc = javax.net.ssl.SSLContext.getInstance("TLS")
+            sc.init(null, arrayOf(trustAll), java.security.SecureRandom())
+            val conn = java.net.URL("https://$ip/status.asp").openConnection() as javax.net.ssl.HttpsURLConnection
+            conn.sslSocketFactory = sc.socketFactory
+            conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+            conn.connectTimeout = 4000; conn.readTimeout = 4000
+            val html = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+            val parts = html.replace(Regex("<[^>]+>"), "|").split("|").map { it.trim() }.filter { it.isNotEmpty() }
+            val i = parts.indexOfFirst { it == "Device Status" }
+            if (i in parts.indices && i + 1 < parts.size) parts[i + 1] else null
         } catch (_: Exception) { null }
     }
 }
