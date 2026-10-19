@@ -239,6 +239,8 @@ final class AppModel: ObservableObject {
     }
 
     /// 修复脚本(值已烘焙, 无参数传递避免引号地狱); PPD=已验证的合法版本(fix-print-queue.sh 同源)
+    /// 修复脚本(值烘焙; PPD=与driver仓同源终局版: manualCopies=True+过滤器COPIES恒1——10-19份数事故定案配方)
+    /// 自检义务: 改本函数后必须跑 build-selftest.sh(生成脚本→bash -n→断言关键行→本地模拟PPD写入)
     private func fixScript(bin: String, ip: String) -> String {
         #"""
         #!/bin/bash
@@ -250,13 +252,14 @@ final class AppModel: ObservableObject {
         cp "\#(bin)" /usr/libexec/cups/filter/LNTHR1Z || exit 1
         chown root:wheel /usr/libexec/cups/filter/LNTHR1Z; chmod 755 /usr/libexec/cups/filter/LNTHR1Z
         cancel -a "$Q" 2>/dev/null
-        if ! lpstat -p "$Q" >/dev/null 2>&1; then
-          mkdir -p /etc/cups/ppd
-          cat > "/etc/cups/ppd/${Q}.ppd" <<'PPD'
+        mkdir -p /etc/cups/ppd
+        cat > "/etc/cups/ppd/${Q}.ppd" <<'PPD'
         *PPD-Adobe: "4.3"
         *FileVersion: "1.0"
         *FormatVersion: "4.3"
         *LanguageVersion: English
+        *LanguageEncoding: ISOLatin1
+        *PSVersion: "(3010.000) 0"
         *Manufacturer: "Lenovo"
         *ModelName: "Lenovo M7208W"
         *ShortNickName: "Lenovo M7208W"
@@ -268,7 +271,6 @@ final class AppModel: ObservableObject {
         *cupsFilter: "application/vnd.cups-raster 0 LNTHR1Z"
         *ColorDevice: False
         *DefaultColorSpace: Gray
-        *CUPSBytesPerPixel: 1
         *OpenUI *ColorModel/Color Mode: PickOne
         *OrderDependency: 10 AnySetup *ColorModel
         *DefaultColorModel: Gray
@@ -277,7 +279,6 @@ final class AppModel: ObservableObject {
         *OpenUI *Resolution/Resolution: PickOne
         *OrderDependency: 20 AnySetup *Resolution
         *DefaultResolution: 600dpi
-        *Resolution 300dpi/300 dpi: "<</HWResolution[300 300]>>setpagedevice"
         *Resolution 600dpi/600 dpi: "<</HWResolution[600 600]>>setpagedevice"
         *CloseUI: *Resolution
         *OpenUI *PageSize/Media Size: PickOne
@@ -292,6 +293,12 @@ final class AppModel: ObservableObject {
         *DefaultPaperDimension: A4
         *PaperDimension A4: "595 842"
         *PaperDimension Letter: "612 792"
+        *OpenUI *PageRegion/Page Region: PickOne
+        *OrderDependency: 35 AnySetup *PageRegion
+        *DefaultPageRegion: A4
+        *PageRegion A4/A4: "<</PageSize[595 842]/ImagingBBox null>>setpagedevice"
+        *PageRegion Letter/US Letter: "<</PageSize[612 792]/ImagingBBox null>>setpagedevice"
+        *CloseUI: *PageRegion
         *OpenUI *InputSlot/Paper Source: PickOne
         *OrderDependency: 40 AnySetup *InputSlot
         *DefaultInputSlot: Auto
@@ -302,23 +309,16 @@ final class AppModel: ObservableObject {
         *DefaultMediaType: Plain
         *MediaType Plain/Plain Paper: ""
         *CloseUI: *MediaType
-        *OpenUI *Copies/Copies: PickOne
-        *OrderDependency: 60 AnySetup *Copies
-        *DefaultCopies: 1
-        *Copies 1/1: ""
-        *CloseUI: *Copies
         *DefaultOutputOrder: Normal
         PPD
-          chown root:_lp "/etc/cups/ppd/${Q}.ppd"; chmod 644 "/etc/cups/ppd/${Q}.ppd"
-          lpadmin -p "$Q" -v "socket://${IP}:9100" -P "/etc/cups/ppd/${Q}.ppd" -D "Lenovo M7208W" -o printer-error-policy=retry-job
-        else
-          lpadmin -p "$Q" -v "socket://${IP}:9100"
-        fi
+        chown root:_lp "/etc/cups/ppd/${Q}.ppd"; chmod 644 "/etc/cups/ppd/${Q}.ppd"
+        lpadmin -p "$Q" -v "socket://${IP}:9100" -P "/etc/cups/ppd/${Q}.ppd" -D "Lenovo M7208W" -o printer-error-policy=retry-job
         cupsenable "$Q" 2>/dev/null; cupsaccept "$Q" 2>/dev/null
         killall -HUP cupsd 2>/dev/null
         echo FIX_DONE
         """#
     }
+
 
     func tonerGet() {
         let t = ip

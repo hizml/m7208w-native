@@ -115,7 +115,7 @@ static void write_pjl_header(cups_page_header2_t *h, const char *user, const cha
     emitf("@PJL SET RESOLUTION=%d\r\n", h->HWResolution[1]);
     emitf("@PJL SET BITSPERPIXEL=1\r\n");
     emitf("@PJL SET RENDERMODE=GRAYSCALE\r\n");
-    emitf("@PJL SET COPIES=%d\r\n", g_copies);   /* 协议原生份数(审查2: cupsManualCopies=True要求过滤器自己产) */
+    emitf("@PJL SET COPIES=1\r\n");   /* 定案10-19: Mac打印会话按manualCopies复制页, 协议层恒1防乘法叠加(4张事故); 安卓走自家COPIES */
     emitf("@PJL SET DUPLEX = OFF\r\n");
     emitf("@PJL ENTER LANGUAGE=LHPL\r\n");
 }
@@ -156,8 +156,9 @@ int main(int argc, char **argv)
     if(!ras){ fprintf(stderr,"ERROR: cupsRasterOpen\n"); return 1; }
     g_out=stdout;
     g_copies=(argc>4)? atoi(argv[4]) : 1;
+    fprintf(stderr,"INFO: LNTHR1Z copies-arg=%d\n", g_copies);
     if(g_copies<1) g_copies=1; if(g_copies>99) g_copies=99;
-    cups_page_header2_t h; int first=1;
+    cups_page_header2_t h; int first=1, npages=0;
     while(cupsRasterReadHeader2(ras,&h)){
         if(first){ write_pjl_header(&h,argv[2],argv[3]);
                    unsigned char sjpay[4]={1,0,1,0};
@@ -174,10 +175,11 @@ int main(int argc, char **argv)
         int letter = (h.cupsPageSize[0] > 603);
         write_sp(h.cupsHeight,bies,letter);
         write_chunk("ep",NULL,0);
-        fprintf(stderr,"PAGE: 1 1\n");
+        fprintf(stderr,"PAGE: 1 1\n"); npages++;
         free(canvas); free(b0.d);
     }
     cupsRasterClose(ras);
+    fprintf(stderr,"INFO: LNTHR1Z done pages=%d copies=%d\n", npages, g_copies);
     if(first){ fprintf(stderr,"ERROR: 0页/坏光栅流\n"); return 1; }   /* 不吐孤儿EOJ(审查7) */
     write_pjl_footer();
     if(fflush(g_out)!=0){ fprintf(stderr,"ERROR: flush\n"); return 1; }
