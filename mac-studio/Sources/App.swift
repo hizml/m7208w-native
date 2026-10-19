@@ -220,10 +220,14 @@ final class AppModel: ObservableObject {
                 do {
                     try p.run(); p.waitUntilExit()
                     let o = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    let e = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
                     if p.terminationStatus == 0 && o.contains("FIX_DONE") {
                         ok = true; detail = "驱动已部署, 队列已指向 \(target):9100"
                     } else {
-                        ok = false; detail = "退出码\(p.terminationStatus) \(o.prefix(200))"
+                        // 失败三源齐上屏: osascript报错 + 脚本trace日志(/tmp/m7208w_fix_err.log)
+                        let trace = (try? String(contentsOfFile: "/tmp/m7208w_fix_err.log", encoding: .utf8)) ?? ""
+                        let lastLines = trace.split(separator: "\n").suffix(4).joined(separator: " | ")
+                        ok = false; detail = "退出码\(p.terminationStatus) [\(e.prefix(150))] 脚本尾: \(lastLines.prefix(250))"
                     }
                 } catch { ok = false; detail = "提权取消或失败: \(error.localizedDescription)" }
                 try? FileManager.default.removeItem(atPath: path)
@@ -238,10 +242,12 @@ final class AppModel: ObservableObject {
     private func fixScript(bin: String, ip: String) -> String {
         #"""
         #!/bin/bash
+        exec 2>/tmp/m7208w_fix_err.log
+        set -x
         Q="M7208W"
-        BIN="#(bin)"
-        IP="#(ip)"
-        cp "#(bin)" /usr/libexec/cups/filter/LNTHR1Z || exit 1
+        BIN="\#(bin)"
+        IP="\#(ip)"
+        cp "\#(bin)" /usr/libexec/cups/filter/LNTHR1Z || exit 1
         chown root:wheel /usr/libexec/cups/filter/LNTHR1Z; chmod 755 /usr/libexec/cups/filter/LNTHR1Z
         cancel -a "$Q" 2>/dev/null
         if ! lpstat -p "$Q" >/dev/null 2>&1; then
