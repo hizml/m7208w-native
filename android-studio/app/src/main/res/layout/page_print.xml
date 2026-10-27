@@ -23,9 +23,17 @@
         android:visibility="gone">
         <TextView android:id="@+id/previewTitle" android:layout_width="wrap_content"
             android:layout_height="wrap_content" android:textSize="13sp" android:text="-"/>
-        <ImageView android:id="@+id/printPreview" android:layout_width="match_parent"
-            android:layout_height="320dp" android:scaleType="fitCenter"
-            android:background="#EEEEEE" android:layout_marginTop="6dp"/>
+        <!-- 预览区: 原厂ImageView ScaleType.CENTER_INSIDE, RGB_565位图居中; 浅底衬托白纸边界;
+             渲染中显示小进度条(原厂mLoadingLayout加载态) -->
+        <FrameLayout android:layout_width="match_parent" android:layout_height="320dp"
+            android:layout_marginTop="6dp">
+            <ImageView android:id="@+id/printPreview" android:layout_width="match_parent"
+                android:layout_height="match_parent" android:scaleType="centerInside"
+                android:background="#EEEEEE"/>
+            <ProgressBar android:id="@+id/previewLoading" android:layout_width="32dp"
+                android:layout_height="32dp" android:layout_gravity="center"
+                android:visibility="gone"/>
+        </FrameLayout>
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
             <Button android:id="@+id/prevPage" android:text="◀" android:minWidth="0dp"
@@ -51,8 +59,34 @@
             android:orientation="horizontal">
             <Spinner android:id="@+id/nupPSpinner" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content"/>
-            <Spinner android:id="@+id/scalePSpinner" android:layout_width="0dp" android:layout_weight="1"
+            <CheckBox android:id="@+id/duplexChk" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="双面(手动翻纸)" android:textSize="13sp"/>
+        </LinearLayout>
+        <!-- 任意缩放: SeekBar 25%~400% 连续可调; "适应纸面"=100% -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="缩放" android:textSize="13sp"/>
+            <SeekBar android:id="@+id/scalePSeek" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content"/>
+            <TextView android:id="@+id/scalePText" android:layout_width="60dp" android:layout_height="wrap_content"
+                android:text="缩放 100%" android:textSize="13sp" android:gravity="center"/>
+            <CheckBox android:id="@+id/fitChk" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="适应纸面" android:textSize="13sp"
+                android:checked="true"/>
+        </LinearLayout>
+        <!-- 自定义纸张(选"自定义"纸型时显示): mm输入 → 600dpi几何 -->
+        <LinearLayout android:id="@+id/customPaperRow" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="horizontal"
+            android:gravity="center_vertical" android:visibility="gone">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="纸宽mm" android:textSize="13sp"/>
+            <EditText android:id="@+id/customWEdit" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:inputType="numberDecimal" android:text="210"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="纸高mm" android:textSize="13sp" android:layout_marginLeft="8dp"/>
+            <EditText android:id="@+id/customHEdit" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:inputType="numberDecimal" android:text="297"/>
         </LinearLayout>
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:gravity="center_vertical">

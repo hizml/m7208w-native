@@ -59,6 +59,32 @@ cat > "/etc/cups/ppd/${Q}.ppd" <<'PPD'
 *DefaultMediaType: Plain
 *MediaType Plain/Plain Paper: ""
 *CloseUI: *MediaType
+*OpenUI *Density/Density: PickOne
+*OrderDependency: 60 AnySetup *Density
+*DefaultDensity: 0
+*Density -3/Lightest (-3): ""
+*Density -2/-2: ""
+*Density -1/-1: ""
+*Density 0/Normal (0): ""
+*Density 1/1: ""
+*Density 2/2: ""
+*Density 3/Darkest (3): ""
+*CloseUI: *Density
+*OpenUI *TonerSave/Toner Save: Boolean
+*OrderDependency: 70 AnySetup *TonerSave
+*DefaultTonerSave: False
+*TonerSave True/On: ""
+*TonerSave False/Off: ""
+*CloseUI: *TonerSave
+*OpenUI *Nup/N-up: PickOne
+*OrderDependency: 80 AnySetup *Nup
+*DefaultNup: 1
+*Nup 1/Off: ""
+*Nup 2/2-up (1x2 portrait): ""
+*Nup 4/4-up (2x2): ""
+*Nup 9/9-up (3x3): ""
+*Nup 16/16-up (4x4): ""
+*CloseUI: *Nup
 *DefaultOutputOrder: Normal
 PPD
 chown root:_lp "/etc/cups/ppd/${Q}.ppd"; chmod 644 "/etc/cups/ppd/${Q}.ppd"

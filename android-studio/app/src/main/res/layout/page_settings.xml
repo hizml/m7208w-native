@@ -44,6 +44,61 @@
         <Button android:id="@+id/refreshBtn" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="刷新状态" android:textSize="13sp"/>
     </LinearLayout>
+
+    <!-- 休眠时间: powersave 帧, 1~30分钟 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="休眠时间 (1~30分钟)" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <EditText android:id="@+id/sleepEdit" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:inputType="number" android:hint="分钟"/>
+        <Button android:id="@+id/sleepReadBtn" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="读取" android:textSize="13sp"/>
+        <Button android:id="@+id/sleepSetBtn" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="保存" android:textSize="13sp"/>
+    </LinearLayout>
+
+    <!-- 热点AP: p2p-wifi 帧(开=6/关=1), SSID 1~32可打印, 密码 8~64 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="热点AP" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <CheckBox android:id="@+id/hotChk" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="启用热点" android:textSize="13sp"/>
+        <Button android:id="@+id/hotReadBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="读取状态" android:textSize="13sp"/>
+    </LinearLayout>
+    <EditText android:id="@+id/hotSSID" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="热点SSID (1~32位可打印字符)" android:inputType="text"/>
+    <EditText android:id="@+id/hotPass" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="热点密码 (8~64位)" android:inputType="textPassword"/>
+    <Button android:id="@+id/hotSetBtn" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="应用热点设置" android:textSize="13sp"/>
+
+    <!-- 打印微调: userconfig 帧, 偏移±6格(约0.5mm/格), 默认浓度±3, 低湿度 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="打印位置微调" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <TextView android:id="@+id/ucLeadingLabel" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="上边偏移: 0" android:textSize="13sp"/>
+    <SeekBar android:id="@+id/ucLeadingSeek" android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/ucSideLabel" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="左边偏移: 0" android:textSize="13sp"/>
+    <SeekBar android:id="@+id/ucSideSeek" android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/ucDensityLabel" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="默认浓度: 0" android:textSize="13sp"/>
+    <SeekBar android:id="@+id/ucDensitySeek" android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <CheckBox android:id="@+id/ucHumidityChk" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="低湿度模式" android:textSize="13sp"/>
+        <Button android:id="@+id/ucReadBtn" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="读取" android:textSize="13sp"/>
+        <Button android:id="@+id/ucSetBtn" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="写入" android:textSize="13sp"/>
+    </LinearLayout>
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:id="@+id/aboutText"
         android:text="M7208W Studio · arm64原生 · 独立复刻\n打印协议: LHPL逆向 · 扫描: 53010/53011 · 非联想官方"

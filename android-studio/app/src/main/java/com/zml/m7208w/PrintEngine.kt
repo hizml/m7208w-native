@@ -3,7 +3,10 @@ package com.zml.m7208w
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.RectF
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetSocketAddress
@@ -76,22 +79,50 @@ object PrintEngine {
         return blk
     }
 
+    /** 纸张几何规格(自定义纸张运行时构造; 字段语义同原 PrintPaper 枚举) */
+    data class PaperSpec(val label: String, val h600: Int, val wmm10: Int, val hmm10: Int,
+                         val code: Int, val baseW96: Int, val baseH96: Int)
+
     // MARK: 打印纸张(枚举对齐原版8种; sp纸码实证A4=2/Letter=1, 其余按几何走A4码)
-    enum class PrintPaper(val label: String, val h600: Int, val wmm10: Int, val hmm10: Int, val code: Int) {
-        A4("A4", 7016, 2100, 2970, 2),
-        LETTER("Letter", 6600, 2159, 2794, 1),
-        B5("B5", 5906, 1760, 2500, 2),
-        A5("A5", 4950, 1480, 2100, 2),
-        B6("B6", 4157, 1250, 1760, 2),
-        A6("A6", 3490, 1050, 1480, 2),
-        K16("16K", 6378, 1930, 2700, 2),
-        EXEC("Executive", 6298, 1841, 2667, 2);
+    // baseW96/baseH96 = 原厂预览像素表基准(约96dpi, PrtDrv.DefaultPagePixelSize):
+    // A4=793x1135, Letter=816x1066, B5=659x784, A5=551x785(renderParams.PREVIEW_PIXEL_BASE),
+    // 其余4种原厂表未载, 按96dpi几何换算(mm×96/25.4)
+    enum class PrintPaper(val label: String, val h600: Int, val wmm10: Int, val hmm10: Int, val code: Int,
+                          val baseW96: Int, val baseH96: Int) {
+        A4("A4", 7016, 2100, 2970, 2, 793, 1135),
+        LETTER("Letter", 6600, 2159, 2794, 1, 816, 1066),
+        B5("B5", 5906, 1760, 2500, 2, 659, 784),
+        A5("A5", 4950, 1480, 2100, 2, 551, 785),
+        B6("B6", 4157, 1250, 1760, 2, 472, 665),
+        A6("A6", 3490, 1050, 1480, 2, 397, 559),
+        K16("16K", 6378, 1930, 2700, 2, 730, 1021),
+        EXEC("Executive", 6298, 1841, 2667, 2, 696, 1008);
+
+        fun spec() = PaperSpec(label, h600, wmm10, hmm10, code, baseW96, baseH96)
+    }
+
+    /** 自定义纸张几何(mm→600dpi像素/纸码走A4几何码): 原厂 customW/H = inch×600, PageSize=17 */
+    fun customPaperSpec(wmm: Double, hmm: Double): PaperSpec {
+        val w = wmm.coerceIn(50.0, 330.0)
+        val h = hmm.coerceIn(50.0, 1200.0)
+        val inch = 25.4
+        return PaperSpec(
+            label = "自定义 ${w.toInt()}×${h.toInt()}mm",
+            h600 = (h / inch * 600).toInt(),
+            wmm10 = (w * 10).toInt(),
+            hmm10 = (h * 10).toInt(),
+            code = 2,   // 非照片通道 pageSize>11 强制回 0, 自定义仅照片/预览通道: 几何走A4码
+            baseW96 = (w / inch * 96).toInt(),
+            baseH96 = (h / inch * 96).toInt())
     }
     enum class PrintMedia(val label: String, val code: Int) {
         PLAIN("普通纸", 1), RECYCLED("再生纸", 2), THICK("厚纸", 3), THIN("薄纸", 4), LABEL("标签", 5)
     }
 
-    /** N合1合成: pages按 n×n 网格拼到一张白底A4(每格等比缩放) */
+    /** N合1合成: pages按 n×n 网格拼到一张白底A4(每格等比缩放); 公开给手动双面分面用 */
+    fun composeSheets(pages: List<Bitmap>, n: Int): List<Bitmap> = composeNup(pages, n)
+
+    /** N合1合成实现: pages按 n×n 网格拼到一张白底A4(每格等比缩放) */
     private fun composeNup(pages: List<Bitmap>, n: Int): List<Bitmap> {
         if (n <= 1) return pages
         val grid = when (n) { 2 -> 1; 4 -> 2; 9 -> 3; 16 -> 4; else -> 1 }  // 2合1=上下两格
@@ -116,28 +147,68 @@ object PrintEngine {
         return out
     }
 
-    /** 证件打印: 正/反面两图合成一页A4(身份证比例85.6×54mm居中上下排布) */
-    fun composeCertificate(front: Bitmap, back: Bitmap): Bitmap {
-        val bmp = Bitmap.createBitmap(1240, 1754, Bitmap.Config.ARGB_8888)
+    /** 证件类型表: 原厂 R.array.certificate_crop_size 数值未提取(notFound),
+     *  身份证 85.6×54 为原厂同款实证, 其余为国内卡式/本式证件公开标准规格(护照 ID-3 125×88) */
+    data class CertType(val label: String, val wmm: Double, val hmm: Double)
+
+    val CERT_TYPES = listOf(
+        CertType("身份证", 85.6, 54.0),
+        CertType("驾驶证", 85.6, 54.0),
+        CertType("社保卡", 85.6, 54.0),
+        CertType("居住证", 85.6, 54.0),
+        CertType("港澳通行证", 85.6, 54.0),
+        CertType("台湾通行证", 85.6, 54.0),
+        CertType("回乡证", 85.6, 54.0),
+        CertType("护照", 125.0, 88.0))
+
+    // 原厂 PrintFetchFileUtils 合成常量(已抽查证实): 画布952×1362, 中线681, 圆角10px
+    private const val CERT_CANVAS_W = 952
+    private const val CERT_CANVAS_H = 1362
+    private const val CERT_MIDLINE = 681
+    private const val CERT_CORNER_PX = 10f
+    /** 画布952px 对应纸宽210mm → 像素/毫米换算 */
+    private const val CERT_PX_PER_MM = CERT_CANVAS_W / 210.0f
+
+    /** 证件打印合成(复刻原厂布局): 正面上半 y=(中线-h)/2×1.25, 背面下半 y=(中线-h)/2÷1.25+中线,
+     *  水平居中, 目标尺寸=证件mm×像素/mm, 圆角10px */
+    fun composeCertificate(front: Bitmap, back: Bitmap, type: CertType): Bitmap {
+        val bmp = Bitmap.createBitmap(CERT_CANVAS_W, CERT_CANVAS_H, Bitmap.Config.ARGB_8888)
         val cv = Canvas(bmp); cv.drawColor(Color.WHITE)
-        val p = Paint(Paint.FILTER_BITMAP_FLAG)
-        // A4@150dpi: 1240×1754; 身份证 85.6×54mm → 506×319px
-        val cw = 506 * 1.9f; val chh = 319 * 1.9f
-        for ((idx, b) in listOf(front, back).withIndex()) {
-            val s = minOf(cw / b.width, chh / b.height)
-            val w = b.width * s; val h = b.height * s
-            val x = (1240 - w) / 2
-            val y = 1754 * 0.08f + idx * (chh + 80)
-            cv.drawBitmap(b, null, android.graphics.RectF(x, y, x + w, y + h), p)
-        }
+        val p = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+        val tw = (type.wmm * CERT_PX_PER_MM).toFloat()
+        val th = (type.hmm * CERT_PX_PER_MM).toFloat()
+        drawCertFace(cv, p, front, tw, th, frontFace = true)
+        drawCertFace(cv, p, back, tw, th, frontFace = false)
         return bmp
     }
 
+    /** 单面绘制: 等比缩放进目标框 + 圆角裁剪 + 原厂Y公式 */
+    private fun drawCertFace(cv: Canvas, p: Paint, src: Bitmap, tw: Float, th: Float, frontFace: Boolean) {
+        val s = minOf(tw / src.width, th / src.height)
+        val w = src.width * s; val h = src.height * s
+        val x = (CERT_CANVAS_W - w) / 2f
+        val y = if (frontFace) (CERT_MIDLINE - h) / 2f * 1.25f
+                else (CERT_MIDLINE - h) / 2f / 1.25f + CERT_MIDLINE
+        val dst = RectF(x, y, x + w, y + h)
+        cv.save()
+        val clip = android.graphics.Path().apply {
+            addRoundRect(dst, CERT_CORNER_PX, CERT_CORNER_PX, android.graphics.Path.Direction.CW) }
+        cv.clipPath(clip)
+        cv.drawBitmap(src, null, dst, p)
+        cv.restore()
+    }
+
     /** 完整打印作业: 纸张/介质/N合1/缩放/浓度/省墨/份数(份数走协议COPIES原生支持) */
-    fun printJob(ip: String, pages: List<Bitmap>, paper: PrintPaper = PrintPaper.A4,
+    fun printJob(ip: String, pages: List<Bitmap>, paper: PaperSpec = PrintPaper.A4.spec(),
                  media: PrintMedia = PrintMedia.PLAIN, nup: Int = 1, scalePct: Int = 100,
-                 density: Int = 0, tonerSave: Boolean = false, copies: Int = 1): Boolean {
-        val composed = composeNup(pages, nup)
+                 density: Int = 0, tonerSave: Boolean = false, copies: Int = 1): Boolean =
+        sendSheets(ip, composeNup(pages, nup), paper, media, scalePct, density, tonerSave, copies)
+
+    /** 发送已合成的"纸"集合(手动双面分两次调用: 正面集→翻纸→背面集) */
+    fun sendSheets(ip: String, sheets: List<Bitmap>, paper: PaperSpec,
+                   media: PrintMedia, scalePct: Int, density: Int,
+                   tonerSave: Boolean, copies: Int): Boolean {
+        val composed = sheets
         val out = ByteArrayOutputStream()
         val hdr = buildString {
             append("\u001b%-12345X@PJL JOB NAME=PRINTER\r\n")
@@ -182,56 +253,67 @@ object PrintEngine {
         } catch (e: Exception) { false }
     }
 
-    /// 预览渲染: 与printJob同公式(浓度gamma/省墨阈值/N合1网格/缩放), 所见即所得
-    /// 返回1位抖动后的预览图(白纸黑字, 模拟实际打印效果)
-    fun renderPreview(pages: List<Bitmap>, pageIdx: Int, paper: PrintPaper,
+    // MARK: - 预览管线(照原厂规格重写)
+    // 原厂(renderParams/howItWorks): 预览与打印同一条光栅管线(仅换模拟器标志4),
+    // 灰度化/浓度/省墨全部在native内完成, Java层无任何抖动/ColorMatrix代码;
+    // 可证实的是 colorMode=0(单色) + 显示RGB_565 → 预览=灰度位图(无1bpp网点抖动),
+    // 改参即全量重光栅化(无叠加滤镜)。
+
+    /** 原厂quality=5(RES600)预览光栅系数(renderParams.QUALITY: ×6.0) */
+    private const val PREVIEW_QUALITY_FACTOR = 6.0f
+    /** 省墨档视觉等效: 着墨量降至75%(原厂值在native内不可见, 取打印机省墨常见档) */
+    private const val TONER_SAVE_INK_RATIO = 0.75f
+    /** N合1子页留边(与composeNup打印合成一致) */
+    private const val NUP_CELL_MARGIN = 0.92f
+
+    /** 单色管线滤镜: 灰度(30/59/11, 与bitmapToCanvas同权重)×浓度×省墨, 合成单次线性矩阵
+     *  浓度公式与打印侧一致(f=1+0.12·density, g'=f·g+(255-255f)/2); 省墨=黑能量乘s */
+    private fun monoColorFilter(density: Int, tonerSave: Boolean): ColorMatrixColorFilter {
+        val f = 1.0 + 0.12 * density.coerceIn(-3, 3)
+        val s: Double = if (tonerSave) TONER_SAVE_INK_RATIO.toDouble() else 1.0
+        val gain = (s * f).toFloat()
+        // v' = s·f·(0.30R+0.59G+0.11B) + [255-255s + s·(255-255f)/2], 结果自动clamp到0..255
+        val offset = (255 - 255 * s + s * (255 - 255 * f) / 2).toFloat()
+        val lum = floatArrayOf(0.30f * gain, 0.59f * gain, 0.11f * gain)
+        val row = floatArrayOf(lum[0], lum[1], lum[2], 0f, offset)
+        return ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+            row[0], row[1], row[2], row[3], row[4],
+            row[0], row[1], row[2], row[3], row[4],
+            row[0], row[1], row[2], row[3], row[4],
+            0f, 0f, 0f, 1f, 0f)))
+    }
+
+    /** N合1网格(列to行; 与composeNup/printJob同分片规则: 2合1=上下, 4/9/16=n×n) */
+    private fun nupGrid(nup: Int): Pair<Int, Int> = when (nup) {
+        2 -> 1 to 2; 4 -> 2 to 2; 9 -> 3 to 3; 16 -> 4 to 4; else -> 1 to 1
+    }
+
+    /** 预览渲染(原厂两级结构的光栅级): 页光栅=纸种96dpi基准×6.0, RGB_565白纸,
+     *  灰度+浓度+省墨经ColorMatrix在绘制时一次完成, N合1/缩放/居中/超纸裁剪同打印规则 */
+    fun renderPreview(pages: List<Bitmap>, pageIdx: Int, paper: PaperSpec,
                       nup: Int, scalePct: Int, density: Int, tonerSave: Boolean): Bitmap? {
         if (pages.isEmpty()) return null
-        val W = 420
-        val H = (W * paper.hmm10 / paper.wmm10).toInt()
-        val page = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        // 页光栅尺寸对齐原厂: DefaultPagePixelSize(96dpi基准)×quality=5系数6.0
+        val w = (paper.baseW96 * PREVIEW_QUALITY_FACTOR).toInt()
+        val h = (paper.baseH96 * PREVIEW_QUALITY_FACTOR).toInt()
+        val page = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
         val cv = Canvas(page); cv.drawColor(Color.WHITE)
-        // 内容: nup>1时按当前页所在"纸"合成网格(与composeNup同分片规则)
-        val sheet = pageIdx / nup
-        val cells = pages.drop(sheet * nup).take(nup)
-        val grid = when (nup) { 2 -> 1; 4 -> 2; 9 -> 3; 16 -> 4; else -> 1 }
-        val cols = if (nup == 2) 1 else grid
-        val rows = if (nup == 2) 2 else grid
-        val p = Paint(Paint.FILTER_BITMAP_FLAG)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
+            colorFilter = monoColorFilter(density, tonerSave)
+        }
+        // 当前预览纸上的子页(分片规则与composeNup一致, 原厂CheckPreviewPage凑齐nUp子页输出一张)
+        val (cols, rows) = nupGrid(nup)
+        val cells = pages.drop((pageIdx / nup) * nup).take(nup)
+        val cw = w.toFloat() / cols; val ch = h.toFloat() / rows
+        val scale = scalePct.coerceIn(25, 400) / 100f
         cells.forEachIndexed { i, b ->
-            val cw = W.toFloat() / cols; val chh = H.toFloat() / rows
-            val s = minOf(cw * 0.92f / b.width, chh * 0.92f / b.height) * (scalePct.coerceIn(25, 400) / 100f)
-            val w = b.width * s; val h = b.height * s
-            val x = (i % cols) * cw + (cw - w) / 2
-            val y = (i / cols) * chh + (chh - h) / 2
-            cv.drawBitmap(b, null, android.graphics.RectF(x, y, x + w, y + h), p)  // 超出纸面自动裁=同引擎
+            val s = minOf(cw * NUP_CELL_MARGIN / b.width, ch * NUP_CELL_MARGIN / b.height) * scale
+            val bw = b.width * s; val bh = b.height * s
+            val x = (i % cols) * cw + (cw - bw) / 2
+            val y = (i / cols) * ch + (ch - bh) / 2
+            cv.drawBitmap(b, null, RectF(x, y, x + bw, y + bh), paint)  // 超出纸面=光栅边界自动裁
         }
-        // 灰度+浓度+FS抖动(阈值与bitmapToCanvas完全一致: 省墨98/普通128)
-        val px = IntArray(W * H)
-        page.getPixels(px, 0, W, 0, 0, W, H)
-        var cur = IntArray(W); var next = IntArray(W)
-        val out = IntArray(W * H)
-        val thr = if (tonerSave) 98 else 128
-        for (y in 0 until H) {
-            java.util.Arrays.fill(next, 0)
-            for (x in 0 until W) {
-                val c = px[y * W + x]
-                var g = ((c shr 16 and 0xFF) * 30 + ((c shr 8) and 0xFF) * 59 + (c and 0xFF) * 11) / 100
-                if (density != 0) {
-                    val f = 1.0 + 0.12 * density
-                    g = (g * f + (255 - 255 * f) / 2).toInt().coerceIn(0, 255)
-                }
-                val v = g + cur[x]
-                val bit = v < thr
-                if (x + 1 < W) cur[x + 1] += (if (bit) v else v - 255) * 7 / 16
-                if (x > 0) next[x - 1] += (if (bit) v else v - 255) * 3 / 16
-                next[x] += (if (bit) v else v - 255) * 5 / 16
-                if (x + 1 < W) next[x + 1] += (if (bit) v else v - 255) / 16
-                out[y * W + x] = if (bit) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
-            }
-            val t = cur; cur = next; next = t
-        }
-        return Bitmap.createBitmap(out, W, H, Bitmap.Config.ARGB_8888)
+        return page
     }
 
     /** 打印一张Bitmap(600dpi画布). 返回成功与否 */
