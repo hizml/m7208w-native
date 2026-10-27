@@ -191,6 +191,20 @@ class MainActivity : Activity() {
         f<Button>(R.id.copyPlus).setOnClickListener { setCopies(printCopies + 1) }
 
         f<Button>(R.id.printGoBtn).setOnClickListener { goPrint() }
+        // 参数实时预览: 任一设置变动→重渲染(10-19用户需求)
+        val onCfg = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) { schedulePreviewUpdate() }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        f<Spinner>(R.id.ppSpinner).onItemSelectedListener = onCfg
+        f<Spinner>(R.id.nupPSpinner).onItemSelectedListener = onCfg
+        f<Spinner>(R.id.scalePSpinner).onItemSelectedListener = onCfg
+        f<SeekBar>(R.id.densityPSeek).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, v: Int, fromUser: Boolean) { schedulePreviewUpdate() }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        f<CheckBox>(R.id.tonerSaveChk).setOnCheckedChangeListener { _, _ -> schedulePreviewUpdate() }
     }
 
     private fun pick(mime: String, code: Int, title: String) {
@@ -209,8 +223,33 @@ class MainActivity : Activity() {
     private fun showPage(idx: Int) {
         if (printPages.isEmpty()) return
         printPageIdx = idx.coerceIn(0, printPages.size - 1)
-        f<ImageView>(R.id.printPreview).setImageBitmap(printPages[printPageIdx])
-        f<TextView>(R.id.pageIndicator).text = "${printPageIdx + 1}/${printPages.size}"
+        schedulePreviewUpdate()   // 渲染管线(参数生效), 非原图直出
+    }
+
+    /// 预览实时渲染: 参数一动即重算(250ms防抖), 与打印引擎同公式
+    private val previewHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val previewRender = Runnable { renderPreview() }
+    private fun schedulePreviewUpdate() {
+        previewHandler.removeCallbacks(previewRender)
+        previewHandler.postDelayed(previewRender, 250)
+    }
+    private fun renderPreview() {
+        if (printPages.isEmpty()) return
+        val paper = PrintEngine.PrintPaper.values().getOrNull(f<Spinner>(R.id.ppSpinner).selectedItemPosition) ?: PrintEngine.PrintPaper.A4
+        val nup = listOf(1, 2, 4, 9, 16)[f<Spinner>(R.id.nupPSpinner).selectedItemPosition]
+        val scale = when (f<Spinner>(R.id.scalePSpinner).selectedItemPosition) { 1 -> 50; 2 -> 75; 3 -> 150; 4 -> 200; else -> 100 }
+        val density = f<SeekBar>(R.id.densityPSeek).progress - 3
+        val tonerSave = f<CheckBox>(R.id.tonerSaveChk).isChecked
+        val idx = printPageIdx; val pages = printPages
+        Thread {
+            val bmp = PrintEngine.renderPreview(pages, idx, paper, nup, scale, density, tonerSave)
+            runOnUiThread {
+                if (bmp != null) f<ImageView>(R.id.printPreview).setImageBitmap(bmp)
+                val sheets = (pages.size + nup - 1) / nup
+                f<TextView>(R.id.pageIndicator).text =
+                    "纸 ${idx / nup + 1}/$sheets · 页 ${idx + 1}/$pages.size"
+            }
+        }.start()
     }
 
     private fun loadPrintPages(uri: Uri, name: String) {

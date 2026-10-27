@@ -182,6 +182,58 @@ object PrintEngine {
         } catch (e: Exception) { false }
     }
 
+    /// 预览渲染: 与printJob同公式(浓度gamma/省墨阈值/N合1网格/缩放), 所见即所得
+    /// 返回1位抖动后的预览图(白纸黑字, 模拟实际打印效果)
+    fun renderPreview(pages: List<Bitmap>, pageIdx: Int, paper: PrintPaper,
+                      nup: Int, scalePct: Int, density: Int, tonerSave: Boolean): Bitmap? {
+        if (pages.isEmpty()) return null
+        val W = 420
+        val H = (W * paper.hmm10 / paper.wmm10).toInt()
+        val page = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        val cv = Canvas(page); cv.drawColor(Color.WHITE)
+        // 内容: nup>1时按当前页所在"纸"合成网格(与composeNup同分片规则)
+        val sheet = pageIdx / nup
+        val cells = pages.drop(sheet * nup).take(nup)
+        val grid = when (nup) { 2 -> 1; 4 -> 2; 9 -> 3; 16 -> 4; else -> 1 }
+        val cols = if (nup == 2) 1 else grid
+        val rows = if (nup == 2) 2 else grid
+        val p = Paint(Paint.FILTER_BITMAP_FLAG)
+        cells.forEachIndexed { i, b ->
+            val cw = W.toFloat() / cols; val chh = H.toFloat() / rows
+            val s = minOf(cw * 0.92f / b.width, chh * 0.92f / b.height) * (scalePct.coerceIn(25, 400) / 100f)
+            val w = b.width * s; val h = b.height * s
+            val x = (i % cols) * cw + (cw - w) / 2
+            val y = (i / cols) * chh + (chh - h) / 2
+            cv.drawBitmap(b, null, android.graphics.RectF(x, y, x + w, y + h), p)  // 超出纸面自动裁=同引擎
+        }
+        // 灰度+浓度+FS抖动(阈值与bitmapToCanvas完全一致: 省墨98/普通128)
+        val px = IntArray(W * H)
+        page.getPixels(px, 0, W, 0, 0, W, H)
+        var cur = IntArray(W); var next = IntArray(W)
+        val out = IntArray(W * H)
+        val thr = if (tonerSave) 98 else 128
+        for (y in 0 until H) {
+            java.util.Arrays.fill(next, 0)
+            for (x in 0 until W) {
+                val c = px[y * W + x]
+                var g = ((c shr 16 and 0xFF) * 30 + ((c shr 8) and 0xFF) * 59 + (c and 0xFF) * 11) / 100
+                if (density != 0) {
+                    val f = 1.0 + 0.12 * density
+                    g = (g * f + (255 - 255 * f) / 2).toInt().coerceIn(0, 255)
+                }
+                val v = g + cur[x]
+                val bit = v < thr
+                if (x + 1 < W) cur[x + 1] += (if (bit) v else v - 255) * 7 / 16
+                if (x > 0) next[x - 1] += (if (bit) v else v - 255) * 3 / 16
+                next[x] += (if (bit) v else v - 255) * 5 / 16
+                if (x + 1 < W) next[x + 1] += (if (bit) v else v - 255) / 16
+                out[y * W + x] = if (bit) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+            }
+            val t = cur; cur = next; next = t
+        }
+        return Bitmap.createBitmap(out, W, H, Bitmap.Config.ARGB_8888)
+    }
+
     /** 打印一张Bitmap(600dpi画布). 返回成功与否 */
     fun print(ip: String, bmp: Bitmap, copies: Int = 1): Boolean {
         return try {
