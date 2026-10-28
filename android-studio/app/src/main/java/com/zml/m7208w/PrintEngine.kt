@@ -1,6 +1,7 @@
 package com.zml.m7208w
 
 import android.graphics.Bitmap
+// 证件表改用CertTable(原厂14种, 2026-10-28)
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
