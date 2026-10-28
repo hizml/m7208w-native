@@ -1,7 +1,8 @@
 package com.zml.m7208w
 
 // MARK: - 打印机系统设置帧 (TCP 9100)
-// 逆向自原厂 libsockcmd.so: powersave(休眠)/p2p-wifi(热点)/userconfig(打印微调)。
+// 逆向自原厂 libsockcmd.so: powersave(休眠)/p2p-wifi(热点)/userconfig(打印微调)/
+// maintenance(感光鼓复位·定影错误清除·关机)/password(管理员密码)。
 // 帧结构: 4d3c2b1a | dev | 01 | cmd | len | 13 | 01 | sub | payload
 // 实证规律(六条帧全部吻合): len = 帧总长, cmd = len - 8, sub 偶数=读/奇数=写。
 // ACK 判定: resp[4]=dev, resp[5]=01, resp[8]=13, resp[9]=01, resp[10]=sub;
@@ -200,6 +201,63 @@ object UserConfig {
         // payload[6..15] 保持 0 填充
         val resp = VopFrame.transact(ip, VopFrame.build(DEV, SUB_SET, payload)) ?: return null
         if (!VopFrame.isAck(resp, DEV, SUB_SET)) return null
+        return VopFrame.errorCode(resp)
+    }
+}
+
+// MARK: - 感光鼓复位/定影错误清除/关机 (dev=07 单字节载荷写帧族, 逆向 cmd_print_drum_reset 等)
+object DeviceMaintenance {
+    private const val DEV = 0x07
+    /** sub 值(反汇编 cmd_print_* 函数 [sp+0x2e] 字节): 定影错误清除 0x0b, 感光鼓复位 0x1a, 关机 0x0f */
+    private const val SUB_FUSER_RESET = 0x0b
+    private const val SUB_DRUM_RESET = 0x1a
+    private const val SUB_POWEROFF_SET = 0x0f
+    /** 原厂 JNI SetPrinterPowerOffState 以 `and v,#1` 掩码入参, 取值仅 0/1 */
+    private const val ACTION_ON = 1
+
+    /** 复位感光鼓计数(换新硒鼓后执行); 返回 null=通信失败, 0=成功, 其他=设备错误码 */
+    fun drumReset(ip: String): Int? = writeOne(ip, SUB_DRUM_RESET)
+
+    /** 清除定影错误状态; 返回 null=通信失败, 0=成功, 其他=设备错误码 */
+    fun fuserReset(ip: String): Int? = writeOne(ip, SUB_FUSER_RESET)
+
+    /** 关机(poweroff_set, 载荷 1=执行); 返回 null=通信失败, 0=成功, 其他=设备错误码 */
+    fun powerOff(ip: String): Int? = writeOne(ip, SUB_POWEROFF_SET)
+
+    /** 单字节载荷写帧公共路径 */
+    private fun writeOne(ip: String, sub: Int): Int? {
+        val resp = VopFrame.transact(ip, VopFrame.build(DEV, sub, byteArrayOf(ACTION_ON.toByte()))) ?: return null
+        if (!VopFrame.isAck(resp, DEV, sub)) return null
+        return VopFrame.errorCode(resp)
+    }
+}
+
+// MARK: - 管理员密码 (password_set sub=0x06 / password_check sub=0x08, 43B帧, 逆向 cmd_print_password_*)
+object AdminPassword {
+    private const val DEV = 0x07
+    private const val SUB_SET = 0x06
+    private const val SUB_CHECK = 0x08
+    /** 载荷为 32B 密码区(原生 strncpy 语义: 拷贝 min(len,32) 字节, 余下补 0), 帧总长 43B */
+    private const val PWD_LEN = 32
+
+    /** 校验密码(原厂 checkAminPassword 同款帧); 返回 null=通信失败, 0=通过, 其他=设备错误码 */
+    fun check(ip: String, password: String): Int? = transactPwd(ip, SUB_CHECK, password)
+
+    /** 改密码: 先发 check 帧验旧密码, 通过才发 set 帧写新密码(原厂 App 层流程: 线上无旧密码字段) */
+    fun setAdminPassword(ip: String, oldPassword: String, newPassword: String): Int? =
+        when (val checkErr = check(ip, oldPassword)) {
+            null -> null
+            0 -> transactPwd(ip, SUB_SET, newPassword)
+            else -> checkErr
+        }
+
+    /** 密码帧公共路径: 32B 零填充 ASCII 载荷 */
+    private fun transactPwd(ip: String, sub: Int, password: String): Int? {
+        val payload = ByteArray(PWD_LEN)
+        val bytes = password.toByteArray(Charsets.US_ASCII)
+        bytes.copyInto(payload, 0, 0, minOf(bytes.size, PWD_LEN))
+        val resp = VopFrame.transact(ip, VopFrame.build(DEV, sub, payload)) ?: return null
+        if (!VopFrame.isAck(resp, DEV, sub)) return null
         return VopFrame.errorCode(resp)
     }
 }

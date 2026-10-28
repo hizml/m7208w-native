@@ -1,7 +1,6 @@
 package com.zml.m7208w
 
 import android.graphics.Bitmap
-// 证件表改用CertTable(原厂14种, 2026-10-28)
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
@@ -18,22 +17,53 @@ import java.util.Date
 
 object PrintEngine {
     private const val CANVAS_W = 5120
-    private const val CANVAS_BPL = CANVAS_W / 8
 
     init { System.loadLibrary("jbigjni") }
-    external fun jbigEncode(bitmap: ByteArray, h: Int): ByteArray
+    external fun jbigEncode(bitmap: ByteArray, w: Int, h: Int): ByteArray
 
-    /** 位图Bitmap → 1bpp 5120宽画布(Floyd-Steinberg抖动)
-     *  scalePct: 目标占满纸比例(25..400, 100=适应纸面); density: -3..3 浓度; tonerSave: 省墨 */
+    /** 大图切页分段(A10): 源图一段=一页的裁剪窗口(源图y起点+行数) */
+    data class PageSegment(val srcY: Int, val srcRows: Int)
+
+    /** 按宽适配的统一缩放系数(打印/预览/分段共用, 保证所见即所得) */
+    private fun rasterScale(bmp: Bitmap, scalePct: Int, rasterW: Int): Float =
+        minOf(rasterW.toFloat() / bmp.width, 8f) * (scalePct.coerceIn(25, 400) / 100f)
+
+    /** 大图切页(A10): 按宽缩放后图高>页高时, 以页高为单位分段循环(页高减重叠0),
+     *  每页只承载一段; 图高<=页高则单页整图。打印与预览共用本公式。 */
+    fun pageSegments(bmp: Bitmap, pageHeight: Int, scalePct: Int, rasterW: Int = CANVAS_W): List<PageSegment> {
+        val th = bmp.height * rasterScale(bmp, scalePct, rasterW)
+        if (th <= pageHeight || pageHeight <= 0) return listOf(PageSegment(0, bmp.height))
+        val pages = kotlin.math.ceil(th / pageHeight).toInt()
+        return (0 until pages).map { i ->
+            val scaledTop = i * pageHeight
+            val scaledBottom = minOf((i + 1) * pageHeight, th.toInt())
+            val scale = rasterScale(bmp, scalePct, rasterW)
+            PageSegment(srcY = (scaledTop / scale).toInt().coerceIn(0, bmp.height - 1),
+                        srcRows = ((scaledBottom - scaledTop) / scale).toInt().coerceAtLeast(1))
+        }
+    }
+
+    /** 位图Bitmap → 1bpp光栅画布(Floyd-Steinberg抖动)
+     *  scalePct: 目标占满纸比例(25..400, 100=适应纸面); density: -3..3 浓度; tonerSave: 省墨;
+     *  rasterW: 光栅行宽(600dpi=5120, 标准300dpi=2560); seg: 大图切页分段(null=整图适应居中) */
     private fun bitmapToCanvas(bmp: Bitmap, pageHeight: Int, scalePct: Int = 100,
-                               density: Int = 0, tonerSave: Boolean = false): ByteArray {
-        val canvas = ByteArray(pageHeight * CANVAS_BPL)
-        val scale = minOf(CANVAS_W.toFloat() / bmp.width, pageHeight.toFloat() / bmp.height, 8f) * (scalePct.coerceIn(25, 400) / 100f)
-        val tw = (bmp.width * scale).toInt().coerceAtMost(CANVAS_W)
-        val th = (bmp.height * (tw.toFloat() / bmp.width)).toInt().coerceAtMost(pageHeight)
-        val scaled = Bitmap.createScaledBitmap(bmp, tw, th, true)
-        val offX = (CANVAS_W - tw) / 2
-        val offY = (pageHeight - th) / 2
+                               density: Int = 0, tonerSave: Boolean = false,
+                               rasterW: Int = CANVAS_W, seg: PageSegment? = null): ByteArray {
+        val bpl = rasterW / 8
+        val canvas = ByteArray(pageHeight * bpl)
+        // 只按宽度求缩放(高不设限): 图高<=页高时结果与原min(W,H,8)公式一致, 超高时由分段承接
+        val scale = rasterScale(bmp, scalePct, rasterW)
+        val srcY = seg?.srcY ?: 0
+        val srcRows = (seg?.srcRows ?: bmp.height).coerceAtMost(bmp.height - srcY)
+        val segment = if (srcY == 0 && srcRows == bmp.height) bmp
+                      else Bitmap.createBitmap(bmp, 0, srcY, bmp.width, srcRows)
+        val tw = (bmp.width * scale).toInt().coerceAtMost(rasterW)
+        val th = (segment.height * (tw.toFloat() / bmp.width)).toInt().coerceAtMost(pageHeight)
+        val scaled = Bitmap.createScaledBitmap(segment, tw, th, true)
+        val offX = (rasterW - tw) / 2
+        // 真分段的切片顶对齐(连续翻页); 整图(含单页退化分段)与无seg保持原垂直居中
+        val isTiledSlice = seg != null && seg.srcRows < bmp.height
+        val offY = if (isTiledSlice) 0 else (pageHeight - th) / 2
         // 逐行取像素+行缓冲复用(峰值内存: 1行像素+误差行, 修OOM审查H1)
         val rowBuf = IntArray(tw)
         var cur = IntArray(tw)
@@ -59,7 +89,7 @@ object PrintEngine {
                 if (x + 1 < tw) next[x + 1] += (if (bit) v else v - 255) / 16
                 if (bit) {
                     val ax = offX + x
-                    canvas[rowY * CANVAS_BPL + ax / 8] = (canvas[rowY * CANVAS_BPL + ax / 8].toInt() or (0x80 shr (ax % 8))).toByte()
+                    canvas[rowY * bpl + ax / 8] = (canvas[rowY * bpl + ax / 8].toInt() or (0x80 shr (ax % 8))).toByte()
                 }
             }
             val t = cur; cur = next; next = t
@@ -120,6 +150,17 @@ object PrintEngine {
         PLAIN("普通纸", 1), RECYCLED("再生纸", 2), THICK("厚纸", 3), THIN("薄纸", 4), LABEL("标签", 5)
     }
 
+    // MARK: 打印质量档(A8, 原厂文案 paper_qulity_*: 精细/标准/Graphics/Text)
+    // spCode 写入 sp 块 pay[4](pay[3]邻位参数位; pay[3]=20为固件1.3.00实证值恒保持,
+    // 精细 spCode=0 即维持出厂默认字节); rasterDpi 决定光栅分辨率:
+    // 精细=600dpi默认, 标准=降低JBIG分辨率(300dpi光栅, 数据量约1/4)
+    enum class PrintQuality(val label: String, val spCode: Int, val rasterDpi: Int) {
+        FINE("精细", 0x00, 600),
+        STANDARD("标准", 0x01, 300),
+        GRAPHICS("Graphics", 0x02, 600),
+        TEXT("Text", 0x03, 600)
+    }
+
     /** N合1合成: pages按 n×n 网格拼到一张白底A4(每格等比缩放); 公开给手动双面分面用 */
     fun composeSheets(pages: List<Bitmap>, n: Int): List<Bitmap> = composeNup(pages, n)
 
@@ -148,68 +189,69 @@ object PrintEngine {
         return out
     }
 
-    /** 证件类型表: 原厂 R.array.certificate_crop_size 数值未提取(notFound),
-     *  身份证 85.6×54 为原厂同款实证, 其余为国内卡式/本式证件公开标准规格(护照 ID-3 125×88) */
-    data class CertType(val label: String, val wmm: Double, val hmm: Double)
-
-    val CERT_TYPES = listOf(
-        CertType("身份证", 85.6, 54.0),
-        CertType("驾驶证", 85.6, 54.0),
-        CertType("社保卡", 85.6, 54.0),
-        CertType("居住证", 85.6, 54.0),
-        CertType("港澳通行证", 85.6, 54.0),
-        CertType("台湾通行证", 85.6, 54.0),
-        CertType("回乡证", 85.6, 54.0),
-        CertType("护照", 125.0, 88.0))
-
     // 原厂 PrintFetchFileUtils 合成常量(已抽查证实): 画布952×1362, 中线681, 圆角10px
     private const val CERT_CANVAS_W = 952
     private const val CERT_CANVAS_H = 1362
     private const val CERT_MIDLINE = 681
     private const val CERT_CORNER_PX = 10f
-    /** 画布952px 对应纸宽210mm → 像素/毫米换算 */
-    private const val CERT_PX_PER_MM = CERT_CANVAS_W / 210.0f
 
-    /** 证件打印合成(复刻原厂布局): 正面上半 y=(中线-h)/2×1.25, 背面下半 y=(中线-h)/2÷1.25+中线,
-     *  水平居中, 目标尺寸=证件mm×像素/mm, 圆角10px */
+    /** 证件面裁剪: 等价原厂crop intent语义(PrintFetchFileUtils.cropImageUriCamera)
+     *  —— 先中心裁剪到 scaleX:scaleY 宽高比(aspectX/aspectY裁剪框, 保留最大裁剪面积),
+     *  再缩放到 outX×outY(outputX/outputY + scaleUpIfNeeded, 裁剪区不足时放大) */
+    fun cropCertFace(src: Bitmap, type: CertType): Bitmap {
+        val cropRatio = type.scaleX.toFloat() / type.scaleY
+        val srcRatio = src.width.toFloat() / src.height
+        // 源图比裁剪框宽→裁两侧; 高→裁上下(中心对齐)
+        val cw: Int; val ch: Int
+        if (srcRatio > cropRatio) { ch = src.height; cw = (ch * cropRatio).toInt() }
+        else { cw = src.width; ch = (cw / cropRatio).toInt() }
+        val x = (src.width - cw) / 2
+        val y = (src.height - ch) / 2
+        val cropped = Bitmap.createBitmap(src, x, y, cw.coerceAtLeast(1), ch.coerceAtLeast(1))
+        return Bitmap.createScaledBitmap(cropped, type.outX, type.outY, true)
+    }
+
+    /** 证件打印合成(复刻原厂saveIdCardImage布局): 每面先按CropSize裁剪,
+     *  正面上半 y=(中线-h)/2×1.25, 背面下半 y=(中线-h)/2÷1.25+中线, 水平居中, 圆角10px */
     fun composeCertificate(front: Bitmap, back: Bitmap, type: CertType): Bitmap {
         val bmp = Bitmap.createBitmap(CERT_CANVAS_W, CERT_CANVAS_H, Bitmap.Config.ARGB_8888)
         val cv = Canvas(bmp); cv.drawColor(Color.WHITE)
         val p = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-        val tw = (type.wmm * CERT_PX_PER_MM).toFloat()
-        val th = (type.hmm * CERT_PX_PER_MM).toFloat()
-        drawCertFace(cv, p, front, tw, th, frontFace = true)
-        drawCertFace(cv, p, back, tw, th, frontFace = false)
+        drawCertFace(cv, p, cropCertFace(front, type), frontFace = true)
+        drawCertFace(cv, p, cropCertFace(back, type), frontFace = false)
         return bmp
     }
 
-    /** 单面绘制: 等比缩放进目标框 + 圆角裁剪 + 原厂Y公式 */
-    private fun drawCertFace(cv: Canvas, p: Paint, src: Bitmap, tw: Float, th: Float, frontFace: Boolean) {
-        val s = minOf(tw / src.width, th / src.height)
-        val w = src.width * s; val h = src.height * s
-        val x = (CERT_CANVAS_W - w) / 2f
-        val y = if (frontFace) (CERT_MIDLINE - h) / 2f * 1.25f
-                else (CERT_MIDLINE - h) / 2f / 1.25f + CERT_MIDLINE
-        val dst = RectF(x, y, x + w, y + h)
+    /** 单面绘制: 已裁剪面按原厂Y公式定位 + 圆角裁剪(超出画布由Canvas边界自然裁掉, 同原厂) */
+    private fun drawCertFace(cv: Canvas, p: Paint, face: Bitmap, frontFace: Boolean) {
+        val x = (CERT_CANVAS_W - face.width) / 2f
+        val y = if (frontFace) (CERT_MIDLINE - face.height) / 2f * 1.25f
+                else (CERT_MIDLINE - face.height) / 2f / 1.25f + CERT_MIDLINE
+        val dst = RectF(x, y, x + face.width, y + face.height)
         cv.save()
         val clip = android.graphics.Path().apply {
             addRoundRect(dst, CERT_CORNER_PX, CERT_CORNER_PX, android.graphics.Path.Direction.CW) }
         cv.clipPath(clip)
-        cv.drawBitmap(src, null, dst, p)
+        cv.drawBitmap(face, null, dst, p)
         cv.restore()
     }
 
-    /** 完整打印作业: 纸张/介质/N合1/缩放/浓度/省墨/份数(份数走协议COPIES原生支持) */
+    /** 完整打印作业: 纸张/介质/N合1/缩放/浓度/省墨/质量/份数(份数走协议COPIES原生支持) */
     fun printJob(ip: String, pages: List<Bitmap>, paper: PaperSpec = PrintPaper.A4.spec(),
                  media: PrintMedia = PrintMedia.PLAIN, nup: Int = 1, scalePct: Int = 100,
-                 density: Int = 0, tonerSave: Boolean = false, copies: Int = 1): Boolean =
-        sendSheets(ip, composeNup(pages, nup), paper, media, scalePct, density, tonerSave, copies)
+                 density: Int = 0, tonerSave: Boolean = false, copies: Int = 1,
+                 quality: PrintQuality = PrintQuality.FINE): Boolean =
+        sendSheets(ip, composeNup(pages, nup), paper, media, scalePct, density, tonerSave, copies, quality)
 
     /** 发送已合成的"纸"集合(手动双面分两次调用: 正面集→翻纸→背面集) */
     fun sendSheets(ip: String, sheets: List<Bitmap>, paper: PaperSpec,
                    media: PrintMedia, scalePct: Int, density: Int,
-                   tonerSave: Boolean, copies: Int): Boolean {
+                   tonerSave: Boolean, copies: Int,
+                   quality: PrintQuality = PrintQuality.FINE): Boolean {
         val composed = sheets
+        // 质量档光栅几何: 600dpi=5120宽全分辨率, 标准300dpi=2560宽降JBIG分辨率(页高等比减半)
+        val rasterW = CANVAS_W * quality.rasterDpi / 600
+        val pageH = paper.h600 * rasterW / CANVAS_W
         val out = ByteArrayOutputStream()
         val hdr = buildString {
             append("\u001b%-12345X@PJL JOB NAME=PRINTER\r\n")
@@ -223,25 +265,29 @@ object PrintEngine {
         out.write(hdr.toByteArray())
         out.write(chunk("sj", byteArrayOf(1, 0, 1, 0)))
         for (bmp in composed) {
-            val pageH = paper.h600
-            val canvas = bitmapToCanvas(bmp, pageH, scalePct, density, tonerSave)
-            val bie = jbigEncode(canvas, pageH)
-            val pay = ByteArray(58)
-            fun le32(dst: ByteArray, off: Int, v: Int) {
-                dst[off] = (v and 0xFF).toByte(); dst[off + 1] = ((v shr 8) and 0xFF).toByte()
-                dst[off + 2] = ((v shr 16) and 0xFF).toByte(); dst[off + 3] = ((v shr 24) and 0xFF).toByte()
+            // 大图切页(A10): 图高>页高分段循环, 每页处理一段(页高减重叠0)
+            for (seg in pageSegments(bmp, pageH, scalePct, rasterW)) {
+                val canvas = bitmapToCanvas(bmp, pageH, scalePct, density, tonerSave, rasterW, seg)
+                val bie = jbigEncode(canvas, rasterW, pageH)
+                val pay = ByteArray(58)
+                fun le32(dst: ByteArray, off: Int, v: Int) {
+                    dst[off] = (v and 0xFF).toByte(); dst[off + 1] = ((v shr 8) and 0xFF).toByte()
+                    dst[off + 2] = ((v shr 16) and 0xFF).toByte(); dst[off + 3] = ((v shr 24) and 0xFF).toByte()
+                }
+                pay[0] = paper.code.toByte(); pay[1] = media.code.toByte(); pay[3] = 20
+                pay[4] = quality.spCode.toByte()   // 质量档参数位(pay[3]邻位; 0=精细默认)
+                le32(pay, 6, pageH)
+                le32(pay, 10, rasterW / 8 * pageH)   // DMA=⌊XD/8⌋×YD, 随光栅宽/分辨率联动
+                le32(pay, 14, bie.size)
+                le32(pay, 18, bie.size)
+                pay[36] = (quality.rasterDpi and 0xFF).toByte()
+                pay[37] = (quality.rasterDpi shr 8).toByte()
+                pay[38] = (paper.wmm10 and 0xFF).toByte(); pay[39] = (paper.wmm10 shr 8).toByte()
+                pay[40] = (paper.hmm10 and 0xFF).toByte(); pay[41] = (paper.hmm10 shr 8).toByte()
+                out.write(chunk("sp", pay))
+                out.write(bie)
+                out.write(chunk("ep", null))
             }
-            pay[0] = paper.code.toByte(); pay[1] = media.code.toByte(); pay[3] = 20
-            le32(pay, 6, pageH)
-            le32(pay, 10, 640 * pageH)
-            le32(pay, 14, bie.size)
-            le32(pay, 18, bie.size)
-            pay[36] = (600 and 0xFF).toByte(); pay[37] = (600 shr 8).toByte()
-            pay[38] = (paper.wmm10 and 0xFF).toByte(); pay[39] = (paper.wmm10 shr 8).toByte()
-            pay[40] = (paper.hmm10 and 0xFF).toByte(); pay[41] = (paper.hmm10 shr 8).toByte()
-            out.write(chunk("sp", pay))
-            out.write(bie)
-            out.write(chunk("ep", null))
         }
         out.write("\u001b%-12345X@PJL EOJ\r\n".toByteArray())
         return try {
@@ -290,7 +336,8 @@ object PrintEngine {
     }
 
     /** 预览渲染(原厂两级结构的光栅级): 页光栅=纸种96dpi基准×6.0, RGB_565白纸,
-     *  灰度+浓度+省墨经ColorMatrix在绘制时一次完成, N合1/缩放/居中/超纸裁剪同打印规则 */
+     *  灰度+浓度+省墨经ColorMatrix在绘制时一次完成, N合1/缩放/居中/超纸裁剪同打印规则;
+     *  大图切页与打印同公式(pageSegments), pageIdx按切页后的"逻辑页"计, 所见即所得 */
     fun renderPreview(pages: List<Bitmap>, pageIdx: Int, paper: PaperSpec,
                       nup: Int, scalePct: Int, density: Int, tonerSave: Boolean): Bitmap? {
         if (pages.isEmpty()) return null
@@ -302,17 +349,20 @@ object PrintEngine {
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
             colorFilter = monoColorFilter(density, tonerSave)
         }
-        // 当前预览纸上的子页(分片规则与composeNup一致, 原厂CheckPreviewPage凑齐nUp子页输出一张)
+        // 当前预览纸上的子页(大图先按打印同公式切页, 再凑N合1格子; 原厂CheckPreviewPage凑齐nUp子页输出一张)
         val (cols, rows) = nupGrid(nup)
-        val cells = pages.drop((pageIdx / nup) * nup).take(nup)
+        val cells = pages.flatMap { b -> pageSegments(b, paper.h600, scalePct).map { b to it } }
+            .drop((pageIdx / nup) * nup).take(nup)
         val cw = w.toFloat() / cols; val ch = h.toFloat() / rows
         val scale = scalePct.coerceIn(25, 400) / 100f
-        cells.forEachIndexed { i, b ->
-            val s = minOf(cw * NUP_CELL_MARGIN / b.width, ch * NUP_CELL_MARGIN / b.height) * scale
-            val bw = b.width * s; val bh = b.height * s
+        cells.forEachIndexed { i, (b, seg) ->
+            val srcBottom = (seg.srcY + seg.srcRows).coerceAtMost(b.height)
+            val src = android.graphics.Rect(0, seg.srcY, b.width, srcBottom)
+            val s = minOf(cw * NUP_CELL_MARGIN / b.width, ch * NUP_CELL_MARGIN / seg.srcRows) * scale
+            val bw = b.width * s; val bh = seg.srcRows * s
             val x = (i % cols) * cw + (cw - bw) / 2
             val y = (i / cols) * ch + (ch - bh) / 2
-            cv.drawBitmap(b, null, RectF(x, y, x + bw, y + bh), paint)  // 超出纸面=光栅边界自动裁
+            cv.drawBitmap(b, src, RectF(x, y, x + bw, y + bh), paint)  // 超出纸面=光栅边界自动裁
         }
         return page
     }
@@ -322,8 +372,6 @@ object PrintEngine {
         return try {
             // A4 @600dpi = 4960x7016, 画布高取页高
             val pageH = 7016
-            val canvas = bitmapToCanvas(bmp, pageH)
-            val bie = jbigEncode(canvas, pageH)
             val out = ByteArrayOutputStream()
             // PJL头: 固件1.3.00实证配方(t5)=手机模板D极简5行, 多余SET行会被静默拒印
             out.write("\u001b%-12345X@PJL JOB NAME=PRINTER\r\n".toByteArray())
@@ -333,25 +381,29 @@ object PrintEngine {
             out.write("@PJL SET COPIES=$copies\r\n".toByteArray())
             out.write("@PJL SET DUPLEX = OFF\r\n".toByteArray())
             out.write("@PJL ENTER LANGUAGE=LHPL\r\n".toByteArray())
-            // sj
             out.write(chunk("sj", byteArrayOf(1, 0, 1, 0)))
             // sp + JBIG (字段语义t5定案: DMA=⌊XD/8⌋×YD, 全LE32, 纸码2=A4, 总长写两遍)
             fun le32(dst: ByteArray, off: Int, v: Int) {
                 dst[off] = (v and 0xFF).toByte(); dst[off + 1] = ((v shr 8) and 0xFF).toByte()
                 dst[off + 2] = ((v shr 16) and 0xFF).toByte(); dst[off + 3] = ((v shr 24) and 0xFF).toByte()
             }
-            val pay = ByteArray(58)
-            pay[0] = 2; pay[1] = 1; pay[3] = 20   // [6]=纸码2(A4) [7]=介质1(普通纸) [8..11]宽=5120
-            le32(pay, 6, pageH)                    // [12..15] 页高
-            le32(pay, 10, 640 * pageH)             // [16..19] DMA=640×h(固件按此分配引擎内存)
-            le32(pay, 14, bie.size)                // [20..23] JBIG总长
-            le32(pay, 18, bie.size)                // [24..27] slot0=总长(手机:总长写两遍)
-            pay[36] = (600 and 0xFF).toByte(); pay[37] = (600 shr 8).toByte()
-            pay[38] = (2100 and 0xFF).toByte(); pay[39] = (2100 shr 8).toByte()  // A4 210mm
-            pay[40] = (2970 and 0xFF).toByte(); pay[41] = (2970 shr 8).toByte()  // A4 297mm
-            out.write(chunk("sp", pay))
-            out.write(bie)
-            out.write(chunk("ep", null))
+            // 大图切页: 图高>页高分段循环, 每页处理一段
+            for (seg in pageSegments(bmp, pageH, 100)) {
+                val canvas = bitmapToCanvas(bmp, pageH, 100, 0, false, CANVAS_W, seg)
+                val bie = jbigEncode(canvas, CANVAS_W, pageH)
+                val pay = ByteArray(58)
+                pay[0] = 2; pay[1] = 1; pay[3] = 20   // [6]=纸码2(A4) [7]=介质1(普通纸) [8..11]宽=5120
+                le32(pay, 6, pageH)                    // [12..15] 页高
+                le32(pay, 10, 640 * pageH)             // [16..19] DMA=640×h(固件按此分配引擎内存)
+                le32(pay, 14, bie.size)                // [20..23] JBIG总长
+                le32(pay, 18, bie.size)                // [24..27] slot0=总长(手机:总长写两遍)
+                pay[36] = (600 and 0xFF).toByte(); pay[37] = (600 shr 8).toByte()
+                pay[38] = (2100 and 0xFF).toByte(); pay[39] = (2100 shr 8).toByte()  // A4 210mm
+                pay[40] = (2970 and 0xFF).toByte(); pay[41] = (2970 shr 8).toByte()  // A4 297mm
+                out.write(chunk("sp", pay))
+                out.write(bie)
+                out.write(chunk("ep", null))
+            }
             out.write("\u001b%-12345X@PJL EOJ\r\n".toByteArray())
             // 发9100
             val s = Socket()

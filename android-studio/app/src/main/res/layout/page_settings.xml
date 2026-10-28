@@ -12,6 +12,10 @@
         <Button android:id="@+id/wifiScanBtn" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="扫描网络" android:textSize="13sp"/>
     </LinearLayout>
+    <!-- 扫码配网(D2): 系统相机拍WiFi二维码 → ZXing解析自动填表 -->
+    <Button android:id="@+id/wifiQrBtn" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="📷 扫码配网 (拍WiFi二维码)"
+        android:textSize="13sp"/>
     <EditText android:id="@+id/newSSID" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:hint="新SSID"/>
     <EditText android:id="@+id/newPass" android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -43,6 +47,15 @@
             android:layout_height="wrap_content" android:text="重启打印机" android:textSize="13sp"/>
         <Button android:id="@+id/refreshBtn" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="刷新状态" android:textSize="13sp"/>
+    </LinearLayout>
+
+    <!-- 感光鼓/定影维护: drum_reset(sub=0x1a) / fusererror_reset(sub=0x0b) 9100设置帧 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:layout_marginTop="8dp">
+        <Button android:id="@+id/drumResetBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="复位感光鼓" android:textSize="13sp"/>
+        <Button android:id="@+id/fuserResetBtn" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="解除定影错误" android:textSize="13sp"/>
     </LinearLayout>
 
     <!-- 休眠时间: powersave 帧, 1~30分钟 -->
@@ -94,6 +107,10 @@
         android:orientation="horizontal" android:gravity="center_vertical">
         <CheckBox android:id="@+id/ucHumidityChk" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="低湿度模式" android:textSize="13sp"/>
+        <CheckBox android:id="@+id/ucBackDirtyChk" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="防背面脏污" android:textSize="13sp"/>
+        <CheckBox android:id="@+id/ucCoolChk" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="强制降温" android:textSize="13sp"/>
         <Button android:id="@+id/ucReadBtn" android:layout_width="wrap_content"
             android:layout_height="wrap_content" android:text="读取" android:textSize="13sp"/>
         <Button android:id="@+id/ucSetBtn" android:layout_width="wrap_content"

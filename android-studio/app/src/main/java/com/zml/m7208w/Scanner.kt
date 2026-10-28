@@ -82,16 +82,28 @@ object SiPacket {
 // MARK: - 扫描会话 (已验证生命周期: LTGS→53010→Sl→Si→数据→Su→等打印机关连接)
 
 class ScanException(val kind: Kind) : Exception(kind.name) {
-    enum class Kind { BUSY, REFUSED, TIMEOUT, DEAD }
+    enum class Kind { BUSY, REFUSED, TIMEOUT, DEAD, CANCELLED }
 }
 
 class ScanSession(private val ip: String) {
 
+    // 取消扫描(C8): 持有53010数据连接, 取消时RST断开(依赖设备侧超时自复位)
+    @Volatile private var dataSocket: Tcp? = null
+    @Volatile var isCancelled = false; private set
+
+    /** 取消: 断开53010连接, 收流线程随即异常退出; 打印机侧超时自复位, 无需额外善后 */
+    fun cancel() {
+        isCancelled = true
+        dataSocket?.rstClose()
+    }
+
     fun scan(o: ScanOptions, onProgress: (Int, ByteArray) -> Unit = { _, _ -> }): Pair<ByteArray, Int> {
         var last: Exception = ScanException(ScanException.Kind.TIMEOUT)
         repeat(4) {
+            if (isCancelled) throw ScanException(ScanException.Kind.CANCELLED)
             try { return oneScan(o, onProgress) }
             catch (e: ScanException) {
+                if (e.kind == ScanException.Kind.CANCELLED) throw e
                 if (e.kind == ScanException.Kind.BUSY) {
                     last = e; Thread.sleep(20000)
                 } else throw e
@@ -108,6 +120,7 @@ class ScanSession(private val ip: String) {
         act.rstClose()
         // ② 53010 会话
         val s = Tcp.connect(ip, 53010, 5000) ?: throw ScanException(ScanException.Kind.REFUSED)
+        dataSocket = s
         try {
             s.send(byteArrayOf(0x53, 0x6c) + ByteArray(6)) // Sl
             Thread.sleep(400)
@@ -121,6 +134,7 @@ class ScanSession(private val ip: String) {
             val t0 = System.currentTimeMillis()
             while (!done && raw.size() < 50_000_000 &&
                    System.currentTimeMillis() - t0 < 40_000) {
+                if (isCancelled) throw ScanException(ScanException.Kind.CANCELLED)
                 val n = s.recv(buf, 40000)
                 if (n == 0) break
                 if (n < 0) throw ScanException(
@@ -156,6 +170,7 @@ class ScanSession(private val ip: String) {
             val (px, w) = Decoder.extract(raw.toByteArray(), o.h, o.dpi)
             return px to w
         } finally {
+            dataSocket = null   // 先摘引用再关: cancel与finally双重rstClose均幂等
             s.rstClose()
         }
     }

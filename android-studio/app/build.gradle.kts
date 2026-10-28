@@ -10,8 +10,8 @@ android {
         applicationId = "com.zml.m7208w"
         minSdk = 24
         targetSdk = 35
-        versionCode = 12
-        versionName = "7.0"
+        versionCode = 13
+        versionName = "8.0"
     }
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
@@ -26,4 +26,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+}
+dependencies {
+    // 二维码解码仅用ZXing核心库(无UI/相机依赖), 配网扫码用(D2)
+    implementation("com.google.zxing:core:3.5.2")
 }

@@ -25,6 +25,17 @@ import android.widget.Toast
 // M7208W Studio v6.0 — 按原厂VOP App架构复刻: 顶部4-Tab(打印/复印/扫描/设置)+底部打印机状态条
 class MainActivity : Activity() {
 
+    private companion object {
+        // 相机拍照回调码(G3/D2): 相机Intent结果在extras["data"], 与相册选图的data uri路径分流
+        const val REQ_CERT_CAM_FRONT = 110   // 证件拍照-身份证正面
+        const val REQ_CERT_CAM_BACK = 111    // 证件拍照-身份证反面
+        const val REQ_CERT_CAM_ONE = 112     // 证件拍照-单面证件
+        const val REQ_WIFI_QR_CAM = 113      // 扫码配网-拍WiFi二维码
+
+        // 加密下拉位(WPA2/WEP64/WEP128/开放) → WiFiWriter帧加密码(3/1/2/0), 双向共用
+        val encFrameBySpinnerPos = intArrayOf(3, 1, 2, 0)
+    }
+
     private lateinit var statusText: TextView
     private lateinit var statusLight: View
     private lateinit var tonerLabel: TextView
@@ -38,6 +49,10 @@ class MainActivity : Activity() {
 
     @Volatile private var deviceBusy = false
     private var lastBitmap: Bitmap? = null
+
+    // 取消扫描(C8): 会话引用+运行标志, scanBtn扫描中切换为"取消"
+    @Volatile private var scanRunning = false
+    private var scanSession: ScanSession? = null
 
     // 打印状态
     private var printPages: List<Bitmap> = emptyList()
@@ -152,7 +167,8 @@ class MainActivity : Activity() {
     }
 
     /// 轮询打印机真实状态, 干完活才解锁 (替代写死的90秒锁——打印早结束也白锁一分半)
-    /// 忙=Printing/Copying/Busy/Warming; Ready/Power Saving=完成; 超时5分钟兜底解锁
+    /// 忙=状态表state=="Busy"; Ready/Sleep/Error=完成; 卡纸等错误(码>=0xBC)状态条亮错;
+    /// 超时5分钟兜底解锁
     private fun unlockWhenIdle() {
         val target = ip()
         Thread {
@@ -160,14 +176,32 @@ class MainActivity : Activity() {
             val deadline = System.currentTimeMillis() + 290_000
             while (System.currentTimeMillis() < deadline) {
                 Thread.sleep(5_000)
-                val st = StatusPage.deviceStatus(target)
-                if (st == null) continue                    // 查询失败继续等
-                val busyNow = st.contains("Print", true) || st.contains("Copy", true)
-                        || st.contains("Warm", true) || st.contains("Busy", true)
-                if (!busyNow) break
+                val st = StatusPage.deviceStatus(target) ?: continue   // 查询失败继续等
+                val info = PrinterStateTable.fromStatusText(st)
+                if (info.code >= 0xBC) showDeviceState(info)           // 卡纸/错误/过热: 状态条显错
+                showJamGuideIfNeeded(info.code)                        // 卡纸张(0xBC..0xC0): 原厂GIF引导
+                if (info.state != "Busy") break
             }
             busy(false)
         }.start()
+    }
+
+    /// 卡纸状态码 → 原厂引导GIF(三组动画按卡纸位置归类: 整张取出/缺纸加纸/后端处理)
+    private val jamGuideGifs = mapOf(
+        0xBC to R.raw.jam_pager_full_1,     // 纸残留 → 前盖抬杆取整张
+        0xBD to R.raw.jam_pager_empty_1,    // 未进纸 → 纸盒加纸
+        0xBE to R.raw.jam_pager_full_1,     // 对位卡纸 → 前盖取整张
+        0xBF to R.raw.jam_pager_backend_1,  // 内部卡纸 → 后端处理
+        0xC0 to R.raw.jam_pager_backend_1)  // 出口卡纸 → 后端处理
+
+    /** 命中卡纸张(0xBC..0xC0)→主线程弹对应原厂GIF引导; 其余状态码不弹 */
+    private fun showJamGuideIfNeeded(code: Int) {
+        val gif = jamGuideGifs[code] ?: return
+        val info = PrinterStateTable.lookup(code)
+        runOnUiThread {
+            GifDialog.show(this, gif, "卡纸处理引导",
+                "${info?.zh ?: "卡纸"} — 请按动画步骤处理后重试")
+        }
     }
 
     // ==================== Tab 切换 ====================
@@ -197,7 +231,9 @@ class MainActivity : Activity() {
             adapter(PrintEngine.PrintPaper.values().map { it.label } + "自定义")
         f<Spinner>(R.id.mediaPSpinner).adapter = adapter(PrintEngine.PrintMedia.values().map { it.label })
         f<Spinner>(R.id.nupPSpinner).adapter = adapter(listOf("1合1", "2合1", "4合1", "9合1", "16合1"))
+        f<Spinner>(R.id.qualityPSpinner).adapter = adapter(PrintEngine.PrintQuality.values().map { it.label })
         setupScaleControl()
+        setupPrintProfiles()
 
         // 6入口(对齐原版: 照片/PDF/TXT/证件/Office/其他)
         f<Button>(R.id.entryPhoto).setOnClickListener { pick("image/*", 100, "选择照片") }
@@ -238,6 +274,7 @@ class MainActivity : Activity() {
         }
         f<Spinner>(R.id.ppSpinner).onItemSelectedListener = onCfg
         f<Spinner>(R.id.nupPSpinner).onItemSelectedListener = onCfg
+        f<Spinner>(R.id.qualityPSpinner).onItemSelectedListener = onCfg
         f<SeekBar>(R.id.densityPSeek).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, v: Int, fromUser: Boolean) { schedulePreviewUpdate() }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
@@ -282,20 +319,112 @@ class MainActivity : Activity() {
         f<android.widget.LinearLayout>(R.id.customPaperRow).visibility = if (isCustom) View.VISIBLE else View.GONE
     }
 
-    /** 证件类型选择(原厂 showSelectTypeDialog 同款列表) → 记住类型后选正面 */
+    // ==================== 我的打印档(A9: SharedPreferences存3组打印参数) ====================
+
+    private val profilePrefs by lazy { getSharedPreferences("print_profiles", MODE_PRIVATE) }
+    private val profileLabels get() = (1..3).map { "我的打印$it" }
+    /** 初始布局会触发一次onItemSelected, 用armed标志跳过(避免启动即覆写当前设置) */
+    private var profileSpinnerArmed = false
+
+    private fun setupPrintProfiles() {
+        f<Spinner>(R.id.profilePSpinner).adapter = adapter(profileLabels)
+        f<Button>(R.id.saveProfileBtn).setOnClickListener { savePrintProfile() }
+        f<Spinner>(R.id.profilePSpinner).onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                if (!profileSpinnerArmed) { profileSpinnerArmed = true; return }
+                loadPrintProfile(pos)
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    /** 保存当前打印参数(纸张/N合1/缩放/浓度/省墨)到所选档位 */
+    private fun savePrintProfile() {
+        val slot = f<Spinner>(R.id.profilePSpinner).selectedItemPosition
+        profilePrefs.edit()
+            .putBoolean("saved_$slot", true)
+            .putInt("paper_$slot", f<Spinner>(R.id.ppSpinner).selectedItemPosition)
+            .putString("customW_$slot", f<EditText>(R.id.customWEdit).text.toString())
+            .putString("customH_$slot", f<EditText>(R.id.customHEdit).text.toString())
+            .putInt("nup_$slot", f<Spinner>(R.id.nupPSpinner).selectedItemPosition)
+            .putInt("scale_$slot", readScalePct())
+            .putInt("density_$slot", f<SeekBar>(R.id.densityPSeek).progress)
+            .putBoolean("tonerSave_$slot", f<CheckBox>(R.id.tonerSaveChk).isChecked)
+            .apply()
+        toast("已保存到 ${profileLabels[slot]}")
+    }
+
+    /** 载入档位参数到控件(联动触发预览重渲) */
+    private fun loadPrintProfile(slot: Int) {
+        if (!profilePrefs.getBoolean("saved_$slot", false)) {
+            toast("${profileLabels.getOrNull(slot) ?: "档位"} 未保存"); return
+        }
+        f<Spinner>(R.id.ppSpinner).setSelection(profilePrefs.getInt("paper_$slot", 0))
+        f<EditText>(R.id.customWEdit).setText(profilePrefs.getString("customW_$slot", "210"))
+        f<EditText>(R.id.customHEdit).setText(profilePrefs.getString("customH_$slot", "297"))
+        f<Spinner>(R.id.nupPSpinner).setSelection(profilePrefs.getInt("nup_$slot", 0))
+        val pct = profilePrefs.getInt("scale_$slot", 100).coerceIn(SCALE_MIN, SCALE_MAX)
+        f<CheckBox>(R.id.fitChk).isChecked = pct == 100
+        if (pct != 100) f<SeekBar>(R.id.scalePSeek).progress = pct - SCALE_MIN
+        f<SeekBar>(R.id.densityPSeek).progress = profilePrefs.getInt("density_$slot", 3).coerceIn(0, 6)
+        f<CheckBox>(R.id.tonerSaveChk).isChecked = profilePrefs.getBoolean("tonerSave_$slot", false)
+        toast("已载入 ${profileLabels[slot]}")
+    }
+
+    /** 证件类型选择(原厂 showSelectTypeDialog: 列表取certificate_selector,
+     *  仅requestCode==1身份证走正反两面对拍, 其余单面裁剪直接打印)。
+     *  选完类型再选来源: 拍照(系统相机Intent, G3)或从相册选(原有路径) */
     private var certTypeIdx = 0
     private fun showCertTypeDialog() {
-        val labels = PrintEngine.CERT_TYPES.map { it.label }.toTypedArray()
+        val labels = CertTable.ALL.map { it.name }.toTypedArray()
         android.app.AlertDialog.Builder(this)
             .setTitle("选择证件类型")
             .setSingleChoiceItems(labels, certTypeIdx) { d, which ->
                 certTypeIdx = which
                 d.dismiss()
-                toast("先选${labels[which]}正面照片")
-                pick("image/*", 104, "${labels[which]}正面")
+                showCertSourceDialog(CertTable.ALL[which])
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /** 证件图片来源: 拍照(零依赖系统相机Intent) / 相册 */
+    private fun showCertSourceDialog(cert: CertType) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle(cert.title)
+            .setItems(arrayOf("📷 拍照", "🖼 从相册选")) { _, which ->
+                if (which == 0) launchCertCamera(cert) else pickCertFromGallery(cert)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 系统相机拍照(G3): 不带EXTRA_OUTPUT, 缩略图Bitmap经extras返回, 直接进裁剪/合成流程 */
+    private fun launchCertCamera(cert: CertType) {
+        val code = if (cert.requestCode == 1) REQ_CERT_CAM_FRONT else REQ_CERT_CAM_ONE
+        if (!launchCamera(code)) return
+        if (cert.requestCode == 1) toast("先拍${cert.name}正面")
+    }
+
+    /** 相册选证件(原有路径): 身份证两面对选, 其余单面 */
+    private fun pickCertFromGallery(cert: CertType) {
+        if (cert.requestCode == 1) {
+            toast("先选${cert.name}正面照片")
+            pick("image/*", 104, "${cert.name}正面")
+        } else {
+            pick("image/*", 107, cert.title)
+        }
+    }
+
+    /** 启动系统相机(公共入口): 无可用相机应用时不发Intent直接提示 */
+    private fun launchCamera(requestCode: Int): Boolean {
+        val i = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        if (i.resolveActivity(packageManager) == null) {
+            toast("无可用相机应用"); return false
+        }
+        @Suppress("DEPRECATION")
+        startActivityForResult(i, requestCode)
+        return true
     }
 
     /** 预览全屏放大: 复用当前预览位图, 黑底居中, 点任意处关闭 */
@@ -332,13 +461,13 @@ class MainActivity : Activity() {
     /** 打印参数快照: 预览与打印共用同一读取口, 保证所见即所得 */
     private data class PrintConfig(val paper: PrintEngine.PaperSpec, val media: PrintEngine.PrintMedia,
                                    val nup: Int, val scale: Int, val density: Int, val tonerSave: Boolean,
-                                   val duplex: Boolean)
+                                   val duplex: Boolean, val quality: PrintEngine.PrintQuality)
 
     /** 缩放取值域(SeekBar 0..375 → 25%..400%) */
     private val SCALE_MIN = 25
     private val SCALE_MAX = 400
 
-    /** 从控件读全量打印参数(纸张/N合1/缩放/浓度/省墨/双面) */
+    /** 从控件读全量打印参数(纸张/N合1/缩放/浓度/省墨/双面/质量) */
     private fun readPrintConfig(): PrintConfig {
         return PrintConfig(
             paper = readPaperSpec(),
@@ -348,7 +477,9 @@ class MainActivity : Activity() {
             scale = readScalePct(),
             density = f<SeekBar>(R.id.densityPSeek).progress - 3,
             tonerSave = f<CheckBox>(R.id.tonerSaveChk).isChecked,
-            duplex = f<CheckBox>(R.id.duplexChk).isChecked)
+            duplex = f<CheckBox>(R.id.duplexChk).isChecked,
+            quality = PrintEngine.PrintQuality.values().getOrNull(f<Spinner>(R.id.qualityPSpinner).selectedItemPosition)
+                ?: PrintEngine.PrintQuality.FINE)
     }
 
     /** 缩放: 勾选"适应纸面"=100%, 否则 SeekBar 任意 25..400% */
@@ -366,15 +497,19 @@ class MainActivity : Activity() {
         return PrintEngine.customPaperSpec(wmm, hmm)
     }
 
-    /** 当前预览纸序号(0起) */
-    private fun currentSheet(): Int = printPageIdx / readPrintConfig().nup
+    /** 大图切页后的逻辑页数(A10): 一张超高源图按页高分段后占多页, 预览/页码与打印同公式 */
+    private fun logicalPageCount(cfg: PrintConfig): Int =
+        printPages.sumOf { PrintEngine.pageSegments(it, cfg.paper.h600, cfg.scale).size }
 
-    /** 翻预览纸(原厂ViewPager逐纸翻页, 纸内子页由N合1拼版决定) */
+    /** 当前预览纸序号(0起, 按逻辑页计) */
+    private fun currentSheet(cfg: PrintConfig = readPrintConfig()): Int = printPageIdx / cfg.nup
+
+    /** 翻预览纸(原厂ViewPager逐纸翻页, 纸内子页由N合1拼版+大图切页共同决定) */
     private fun showPage(sheetIdx: Int) {
         if (printPages.isEmpty()) return
-        val nup = readPrintConfig().nup
-        val sheets = (printPages.size + nup - 1) / nup
-        printPageIdx = sheetIdx.coerceIn(0, sheets - 1) * nup
+        val cfg = readPrintConfig()
+        val sheets = (logicalPageCount(cfg) + cfg.nup - 1) / cfg.nup
+        printPageIdx = sheetIdx.coerceIn(0, sheets - 1) * cfg.nup
         schedulePreviewUpdate()
     }
 
@@ -419,9 +554,11 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    /** 页码标题(原厂loading_preview_title_format"第x/y页") + 翻页箭头首末页隐藏(原厂setIvVisible) */
+    /** 页码标题(原厂loading_preview_title_format"第x/y页") + 翻页箭头首末页隐藏(原厂setIvVisible);
+     *  页数按大图切页后的逻辑页计(A10) */
     private fun updatePageIndicator(nup: Int) {
-        val sheets = (printPages.size + nup - 1) / nup
+        val cfg = readPrintConfig()
+        val sheets = (logicalPageCount(cfg) + nup - 1) / nup
         val sheet = printPageIdx / nup + 1
         f<TextView>(R.id.pageIndicator).text = "第 $sheet / $sheets 页"
         f<Button>(R.id.prevPage).visibility = if (sheet <= 1) View.INVISIBLE else View.VISIBLE
@@ -462,13 +599,17 @@ class MainActivity : Activity() {
         if (printPages.isEmpty()) { toast("先选择要打印的内容"); return }
         if (deviceBusy) { statusText.text = "⏳ 打印机正忙, 请等当前任务完成"; return }
         val cfg = readPrintConfig()   // 与预览同一参数口, 所见即所得
-        if (cfg.duplex) { goManualDuplexPrint(cfg); return }
+        // 手动双面发作业前: 原厂第一步GIF引导(放纸), 弹窗不阻塞作业
+        if (cfg.duplex) {
+            GifDialog.show(this, R.raw.print_double_step_1, "双面打印", "请先放入纸张")
+            goManualDuplexPrint(cfg); return
+        }
         busy(true)
-        statusText.text = "打印处理中… (${printPages.size}页×${printCopies}份)"
+        statusText.text = "打印处理中… (${logicalPageCount(cfg)}页×${printCopies}份)"
         Thread {
             try {
                 val ok = PrintEngine.printJob(ip(), printPages, cfg.paper, cfg.media,
-                    cfg.nup, cfg.scale, cfg.density, cfg.tonerSave, printCopies)
+                    cfg.nup, cfg.scale, cfg.density, cfg.tonerSave, printCopies, cfg.quality)
                 runOnUiThread {
                     if (ok) {
                         statusText.text = "✅ 已发送打印 — 完成前请勿扫描/复印"
@@ -495,7 +636,7 @@ class MainActivity : Activity() {
                 val front = sheets.filterIndexed { i, _ -> i % 2 == 0 }
                 val back = sheets.filterIndexed { i, _ -> i % 2 == 1 }
                 val okFront = PrintEngine.sendSheets(ip(), front, cfg.paper, cfg.media,
-                    cfg.scale, cfg.density, cfg.tonerSave, printCopies)
+                    cfg.scale, cfg.density, cfg.tonerSave, printCopies, cfg.quality)
                 runOnUiThread {
                     if (!okFront) {
                         busy(false); statusText.text = "❌ 正面打印失败(检查IP/打印机状态)"; return@runOnUiThread
@@ -512,7 +653,7 @@ class MainActivity : Activity() {
                             Thread {
                                 try {
                                     val okBack = PrintEngine.sendSheets(ip(), back, cfg.paper, cfg.media,
-                                        cfg.scale, cfg.density, cfg.tonerSave, printCopies)
+                                        cfg.scale, cfg.density, cfg.tonerSave, printCopies, cfg.quality)
                                     runOnUiThread {
                                         if (okBack) {
                                             statusText.text = "✅ 双面作业全部发送 — 完成前请勿扫描/复印"
@@ -564,7 +705,9 @@ class MainActivity : Activity() {
             val o = CopyOptions(copies = copies, scale = scale.coerceIn(25, 400), dpi = dpi,
                 src = src, dst = dst, nup = nup, media = media, textMode = textMode,
                 density = f<SeekBar>(R.id.copyDensitySeek).progress)
-            if (nup == NupMode.ID_CARD) toast("证件复印: 先放正面按开始, 提示后翻面再按一次")
+            // 证件复印: 原厂第一步GIF引导(放置正面), 弹窗不阻塞命令
+            if (nup == NupMode.ID_CARD)
+                GifDialog.show(this, R.raw.copy_idcard_step_1, "身份证复印", "请放置正面 — 提示后翻面再放背面")
             statusText.text = "复印命令发送中…"
             Thread {
                 try {
@@ -591,7 +734,7 @@ class MainActivity : Activity() {
         f<SeekBar>(R.id.densitySeek).setOnSeekBarChangeListener(simpleSeek(R.id.densityLabel, "浓度", 127))
         f<SeekBar>(R.id.brightSeek).setOnSeekBarChangeListener(simpleSeek(R.id.brightLabel, "亮度", 127))
         f<SeekBar>(R.id.contrastSeek).setOnSeekBarChangeListener(simpleSeek(R.id.contrastLabel, "对比度", 127))
-        scanBtn.setOnClickListener { runScan() }
+        scanBtn.setOnClickListener { if (scanRunning) cancelScan() else runScan() }
         saveBtn.setOnClickListener { saveGallery(f<Spinner>(R.id.scanFmtSpinner).selectedItemPosition == 1) }
         f<Button>(R.id.addPdfBtn).setOnClickListener {
             lastBitmap?.let { pdfQueue.add(it); statusText.text = "已加入PDF队列 (${pdfQueue.size}页)" }
@@ -628,14 +771,16 @@ class MainActivity : Activity() {
         getPreferences(MODE_PRIVATE).edit().putString("ip", ip()).apply()
         if (deviceBusy) { statusText.text = "⏳ 打印机正忙, 请等当前任务完成"; return }
         busy(true)
-        scanBtn.isEnabled = false
+        scanRunning = true
+        scanBtn.text = "✖ 取消"   // 扫描中变为取消(C8), 保持可点击
         progress.visibility = View.VISIBLE
         statusText.text = "扫描中…"
         lastLiveRows = 0
         val target = ip()
+        val session = ScanSession(target)
+        scanSession = session
         Thread {
             try {
-                val session = ScanSession(target)
                 var result: Pair<ByteArray, Int>? = null
                 try {
                     result = session.scan(options) { n, rawChunk ->
@@ -643,9 +788,12 @@ class MainActivity : Activity() {
                         livePreview(rawChunk)
                     }
                 } catch (e: ScanException) {
+                    // 用户取消: 直接抛出收尾, 不触发"扫描服务休眠→远程重启"流程
+                    if (session.isCancelled) throw ScanException(ScanException.Kind.CANCELLED)
                     if (e.kind == ScanException.Kind.DEAD) {
                         runOnUiThread { statusText.text = "扫描服务休眠(打印后固病), 远程重启打印机…约3分钟" }
-                        if (!PrinterControl.reboot(target) || !waitReboot(target)) throw ScanException(ScanException.Kind.DEAD)
+                        if (!PrinterControl.reboot(target) || !waitReboot(target) { session.isCancelled })
+                            throw ScanException(ScanException.Kind.DEAD)
                         runOnUiThread { statusText.text = "打印机已恢复, 重新扫描…" }
                         result = session.scan(options) { n, rawChunk ->
                             runOnUiThread { statusText.text = "扫描中… ${n / 1024} KB" }
@@ -660,28 +808,44 @@ class MainActivity : Activity() {
                 lastSavedUri = null   // 新扫描作废旧分享目标(审查M6)
                 runOnUiThread {
                     busy(false)
+                    resetScanUi()
                     preview.setImageBitmap(bmp)
                     preview.visibility = View.VISIBLE
                     statusText.text = "扫描完成 (${width}×${processed.size / width})"
-                    scanBtn.isEnabled = true
                     saveBtn.isEnabled = true
-                    progress.visibility = View.GONE
                 }
             } catch (e: Throwable) {   // 含OOM等Error, 防deviceBusy永久锁死(审查M1)
                 runOnUiThread {
                     busy(false)
-                    statusText.text = "失败: ${friendly(e)}"
-                    scanBtn.isEnabled = true
+                    resetScanUi()
+                    statusText.text = if (session.isCancelled) "已取消扫描" else "失败: ${friendly(e)}"
                     saveBtn.isEnabled = lastBitmap != null
-                    progress.visibility = View.GONE
                 }
             }
         }.start()
     }
 
-    private fun waitReboot(ip: String, maxSec: Int = 300): Boolean {
+    /** 取消扫描(C8): 断开53010连接(依赖设备侧超时自复位), deviceBusy解锁, UI恢复 */
+    private fun cancelScan() {
+        scanSession?.cancel()
+        busy(false)
+        resetScanUi()
+        statusText.text = "已取消扫描(打印机侧稍后自动复位)"
+    }
+
+    /** 扫描控件恢复初始态(完成/失败/取消三路共用) */
+    private fun resetScanUi() {
+        scanRunning = false
+        scanSession = null
+        scanBtn.text = "🔍 开始扫描"
+        scanBtn.isEnabled = true
+        progress.visibility = View.GONE
+    }
+
+    private fun waitReboot(ip: String, maxSec: Int = 300, isCancelled: () -> Boolean = { false }): Boolean {
         val deadline = System.currentTimeMillis() + maxSec * 1000L
         while (System.currentTimeMillis() < deadline) {
+            if (isCancelled()) throw ScanException(ScanException.Kind.CANCELLED)
             if (PrinterControl.isAlive(ip)) { Thread.sleep(20000); return true }
             Thread.sleep(5000)
         }
@@ -694,6 +858,7 @@ class MainActivity : Activity() {
             ScanException.Kind.REFUSED -> "无法连接扫描服务, 检查IP或重启打印机"
             ScanException.Kind.TIMEOUT -> "等待数据超时"
             ScanException.Kind.DEAD -> "扫描服务休眠且远程重启失败, 请手动重启打印机"
+            ScanException.Kind.CANCELLED -> "已取消扫描"
         }
         else -> e.message ?: "未知错误"
     }
@@ -821,6 +986,8 @@ class MainActivity : Activity() {
                 }
             }.start()
         }
+        // 扫码配网(D2): 系统相机拍WiFi二维码 → ZXing core解析 → 自动填入SSID/密码/加密方式
+        f<Button>(R.id.wifiQrBtn).setOnClickListener { launchCamera(REQ_WIFI_QR_CAM) }
         f<Button>(R.id.wifiWriteBtn).setOnClickListener {
             val ssid = f<EditText>(R.id.newSSID).text.toString().trim()
             val pass = f<EditText>(R.id.newPass).text.toString()
@@ -830,7 +997,7 @@ class MainActivity : Activity() {
                 .setMessage("打印机将连接 \"$ssid\" 并重启, IP可能变化。写错需USB线重配。确认?")
                 .setPositiveButton("确认写入") { _, _ ->
                     Thread {
-                        val enc = listOf(3, 1, 2, 0)[f<Spinner>(R.id.wifiEncSpinner).selectedItemPosition]
+                        val enc = encFrameBySpinnerPos[f<Spinner>(R.id.wifiEncSpinner).selectedItemPosition]
                         val ok = WiFiWriter.write(ip(), ssid, pass, enc)
                         runOnUiThread { statusText.text = if (ok) "✅ 已写入, 打印机重启中(约3分钟)" else "❌ 写入被拒" }
                     }.start()
@@ -870,12 +1037,29 @@ class MainActivity : Activity() {
         setupPrinterSettingsSection()
     }
 
-    // ==================== 打印机系统设置区(休眠/热点/微调, 9100设置帧) ====================
+    // ==================== 打印机系统设置区(休眠/热点/微调/感光鼓定影维护, 9100设置帧) ====================
 
     private fun setupPrinterSettingsSection() {
         setupSleepSection()
         setupHotspotSection()
         setupUserConfigSection()
+        setupMaintenanceSection()
+    }
+
+    /** 感光鼓/定影维护: drum_reset(sub=0x1a 带确认弹窗) / fusererror_reset(sub=0x0b) */
+    private fun setupMaintenanceSection() {
+        f<Button>(R.id.drumResetBtn).setOnClickListener {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("复位感光鼓")
+                .setMessage("将清零感光鼓计数(换新硒鼓后执行)。确认复位?")
+                .setPositiveButton("复位") { _, _ ->
+                    runSetting("复位感光鼓") { settingErrText(DeviceMaintenance.drumReset(ip())) }
+                }
+                .setNegativeButton("取消", null).show()
+        }
+        f<Button>(R.id.fuserResetBtn).setOnClickListener {
+            runSetting("清除定影错误") { settingErrText(DeviceMaintenance.fuserReset(ip())) }
+        }
     }
 
     /** 设备设置动作公共收尾: 后台执行 + 结果写状态条(错误码译中文) */
@@ -969,6 +1153,9 @@ class MainActivity : Activity() {
                     f<SeekBar>(R.id.ucSideSeek).progress = v.sideToSide - UserConfig.OFFSET_MIN
                     f<SeekBar>(R.id.ucDensitySeek).progress = v.imageDensity - UserConfig.DENSITY_MIN
                     f<CheckBox>(R.id.ucHumidityChk).isChecked = v.lowHumidity
+                    // 隐藏项回填: plateControl 0=开/2=关(反码语义), coolMode 1=开
+                    f<CheckBox>(R.id.ucBackDirtyChk).isChecked = v.plateControl == UserConfig.PLATE_DIRTY_ON
+                    f<CheckBox>(R.id.ucCoolChk).isChecked = v.coolMode != 0
                 }
                 "✅ 偏移(${v.leadingEdge},${v.sideToSide}) 浓度${v.imageDensity} 低湿度${if (v.lowHumidity) "开" else "关"}"
             }
@@ -979,8 +1166,9 @@ class MainActivity : Activity() {
                 sideToSide = f<SeekBar>(R.id.ucSideSeek).progress + UserConfig.OFFSET_MIN,
                 imageDensity = f<SeekBar>(R.id.ucDensitySeek).progress + UserConfig.DENSITY_MIN,
                 lowHumidity = f<CheckBox>(R.id.ucHumidityChk).isChecked,
-                plateControl = UserConfig.PLATE_DIRTY_OFF,   // 背面脏污/强制冷却保持中性默认(App未暴露)
-                coolMode = 0)
+                plateControl = if (f<CheckBox>(R.id.ucBackDirtyChk).isChecked)
+                    UserConfig.PLATE_DIRTY_ON else UserConfig.PLATE_DIRTY_OFF,
+                coolMode = if (f<CheckBox>(R.id.ucCoolChk).isChecked) 1 else 0)
             runSetting("写入打印微调") { settingErrText(UserConfig.set(ip(), v)) }
         }
     }
@@ -1003,8 +1191,47 @@ class MainActivity : Activity() {
     }
 
     // ==================== 状态/发现 ====================
+
+    // 状态条配色(原厂状态色 Black/Orange/Red → App内呈现)
+    private val colorTextNormal = Color.BLACK                        // 原厂Black: 正常态文字
+    private val colorTextWarning = Color.parseColor("#f59e0b")      // 原厂Orange: 注意态(与busyText同橙)
+    private val colorTextOnline = Color.parseColor("#1a7f37")       // 文字: 在线但未知状态
+    private val colorLightOk = Color.parseColor("#22c55e")          // 指示灯: 在线/正常
+    private val colorLightErr = Color.parseColor("#ef4444")         // 指示灯: 离线/错误
+
     private fun setLight(color: Int) {
         (statusLight.background as? android.graphics.drawable.GradientDrawable)?.setColor(color)
+    }
+
+    /** 原厂状态色(Black/Orange/Red) → 状态条文字颜色 */
+    private fun stateTextColor(factoryColor: String): Int = when (factoryColor) {
+        "Orange" -> colorTextWarning
+        "Red" -> Color.RED
+        else -> colorTextNormal
+    }
+
+    /** 指示灯颜色: 原厂Orange→橙, Red→红, 其余(Black正常)→绿 */
+    private fun stateLightColor(factoryColor: String): Int = when (factoryColor) {
+        "Orange" -> colorTextWarning
+        "Red" -> colorLightErr
+        else -> colorLightOk
+    }
+
+    /** 墨粉条颜色随状态: Error红(含卡纸/硬件故障), Orange注意, 其余绿 */
+    private fun tonerBarColor(info: PrinterStateInfo?): Int = when (info?.color) {
+        "Red" -> Color.RED
+        "Orange" -> colorTextWarning
+        else -> colorTextOnline
+    }
+
+    /** 把状态表项渲染到状态条(文案+原厂色)与指示灯; 墨粉条同步变色; 可从任意线程调用 */
+    private fun showDeviceState(info: PrinterStateInfo, prefix: String = "⚠ ") {
+        runOnUiThread {
+            statusText.text = "$prefix${info.zh}"
+            statusText.setTextColor(stateTextColor(info.color))
+            setLight(stateLightColor(info.color))
+            tonerBar.progressTintList = android.content.res.ColorStateList.valueOf(tonerBarColor(info))
+        }
     }
 
     private fun refreshStatus() {
@@ -1014,17 +1241,36 @@ class MainActivity : Activity() {
         Thread {
             val alive = PrinterControl.isAlive(target)
             var toner: Triple<Int, Int, Int>? = null
-            if (alive) toner = TonerStatus.fetch(target)
-            runOnUiThread {
-                statusText.text = if (alive) "● 在线 $target" else "● 离线 $target"
-                statusText.setTextColor(if (alive) Color.parseColor("#1a7f37") else Color.RED)
-                setLight(if (alive) Color.parseColor("#22c55e") else Color.parseColor("#ef4444"))
-                if (toner != null) {
-                    tonerLabel.text = "墨粉 ${toner.first}%"
-                    tonerBar.progress = toner.first
-                } else { tonerLabel.text = "墨粉 --"; tonerBar.progress = 0 }
+            var state: PrinterStateInfo? = null
+            if (alive) {
+                toner = TonerStatus.fetch(target)
+                // Device Status 文本 → 56态表(未知码也回退为带原文的表项)
+                state = StatusPage.deviceStatus(target)?.let { PrinterStateTable.fromStatusText(it) }
             }
+            runOnUiThread { renderStatus(target, alive, state, toner) }
         }.start()
+    }
+
+    /** 底部状态条渲染: 在线=状态表中文文案(原厂色), 离线=红; 指示灯/墨粉条随状态变色 */
+    private fun renderStatus(target: String, alive: Boolean, state: PrinterStateInfo?, toner: Triple<Int, Int, Int>?) {
+        if (!alive) {
+            statusText.text = "● 离线 $target"
+            statusText.setTextColor(Color.RED)
+            setLight(colorLightErr)
+        } else if (state != null) {
+            statusText.text = "● 在线 $target · ${state.zh}"
+            statusText.setTextColor(stateTextColor(state.color))
+            setLight(stateLightColor(state.color))
+        } else {
+            statusText.text = "● 在线 $target"
+            statusText.setTextColor(colorTextOnline)
+            setLight(colorLightOk)
+        }
+        if (toner != null) {
+            tonerLabel.text = "墨粉 ${toner.first}%"
+            tonerBar.progress = toner.first
+        } else { tonerLabel.text = "墨粉 --"; tonerBar.progress = 0 }
+        tonerBar.progressTintList = android.content.res.ColorStateList.valueOf(tonerBarColor(state))
     }
 
     private fun findPrinter() {
@@ -1039,42 +1285,152 @@ class MainActivity : Activity() {
                     ipEdit.setText(hit)
                     statusText.text = "✅ 找到打印机 $hit"
                     refreshStatus()
-                } else statusText.text = "❌ 没找到(确认手机和打印机同WiFi)"
+                } else {
+                    statusText.text = "❌ 没找到(确认手机和打印机同WiFi)"
+                    showConnectGuideDialog()
+                }
             }
         }.start()
     }
 
-    // ==================== 文件选择回调 ====================
+    /** 连接失败三步引导(D5): 文案取自原厂strings.xml
+     *  (search_printer_one_step_content / print_pro_frist_step_content / print_pro_second_step_content,
+     *   步骤标签沿用print_pro_frist/second_step; "第三步:"原厂无对应串, 按"第一步/第二步"格式续写) */
+    private fun showConnectGuideDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("搜索失败，请重新搜索")   // 原厂 research_printer
+            .setMessage("第一步: 确认打印机电源、打印机Wi-Fi是否开启？\n\n" +
+                "第二步: 请确认电源是否开启，并确认本设备与打印机是否在同一无线网络。\n\n" +
+                "第三步: 1秒内连续按机器电源按钮三次，自动打印出移动设备连接打印机指南，按指南处理。")
+            .setPositiveButton("重新搜索") { _, _ -> findPrinter() }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ==================== 退出确认(F5) ====================
+    /** 有扫描结果时退出需确认(文案取原厂strings.xml: quit_dialog_text/quit_btn_yes/quit_btn_no) */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (lastBitmap == null && pdfQueue.isEmpty()) {
+            @Suppress("DEPRECATION") super.onBackPressed(); return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("提示")   // 原厂 prompt
+            .setMessage("应用关闭后，扫描图片将会被删除，是否关闭，请确认!")
+            .setPositiveButton("是") { _, _ -> @Suppress("DEPRECATION") finish() }
+            .setNegativeButton("否", null)
+            .show()
+    }
+
+    // ==================== 文件选择/相机回调 ====================
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data?.data == null) return
-        val uri = data.data!!
+        if (resultCode != RESULT_OK) return
+        // 相机拍照(G3/D2): 缩略图在extras["data"], 无data uri, 先于相册路径分流
+        when (requestCode) {
+            REQ_CERT_CAM_FRONT, REQ_CERT_CAM_BACK, REQ_CERT_CAM_ONE -> {
+                handleCertCamera(requestCode, data); return
+            }
+            REQ_WIFI_QR_CAM -> { handleWifiQrCamera(data); return }
+        }
+        val uri = data?.data ?: return
         val name = uri.toString()
         when (requestCode) {
             100, 101, 102, 103, 105 -> loadPrintPages(uri, name)
-            104 -> { // 证件正面 → 继续选反面
+            104 -> { // 身份证正面(requestCode==1) → 继续选反面
                 try {
                     pendingCertFront = decodeSampled(uri, 2000)
                     toast("再选反面照片")
                     pick("image/*", 106, "证件反面")
                 } catch (e: Exception) { statusText.text = "❌ ${e.message}" }
             }
-            106 -> { // 证件反面 → 合成(按所选证件类型尺寸, 原厂952×1362上下分面布局)
+            106 -> { // 身份证反面 → 正反合成(原厂saveIdCardImage: 952×1362上下分面布局)
                 try {
                     val back = decodeSampled(uri, 2000)
                     val front = pendingCertFront
                     if (front != null && back != null) {
-                        val type = PrintEngine.CERT_TYPES.getOrElse(certTypeIdx) { PrintEngine.CERT_TYPES[0] }
-                        printPages = listOf(PrintEngine.composeCertificate(front, back, type))
+                        val type = CertTable.ALL.getOrElse(certTypeIdx) { CertTable.ALL[0] }
                         pendingCertFront = null   // 用完即清, 防残留串台(审查L)
-                        f<android.widget.LinearLayout>(R.id.previewCard).visibility = View.VISIBLE
-                        f<TextView>(R.id.previewTitle).text = "${type.label}打印 (正反合成)"
-                        showPage(0); setCopies(1)
-                        statusText.text = "${type.label}已合成, 可直接打印"
+                        showCertPages(PrintEngine.composeCertificate(front, back, type),
+                            "${type.name}打印 (正反合成)", "${type.name}已合成, 可直接打印")
                     }
+                } catch (e: Exception) { statusText.text = "❌ ${e.message}" }
+            }
+            107 -> { // 非身份证证件: 单面按CropSize裁剪(aspect比裁剪+outX×outY缩放)直接入打印页
+                try {
+                    val src = decodeSampled(uri, 2000) ?: throw IllegalStateException("图片解码失败")
+                    val type = CertTable.ALL.getOrElse(certTypeIdx) { CertTable.ALL[0] }
+                    showCertPages(PrintEngine.cropCertFace(src, type),
+                        "${type.name}打印", "${type.name}已裁剪(${type.outX}×${type.outY}), 可直接打印")
                 } catch (e: Exception) { statusText.text = "❌ ${e.message}" }
             }
         }
     }
+
+    /** 证件照片入版(拍照/相册三路共用): 单页入打印队列+预览卡显示 */
+    private fun showCertPages(composed: Bitmap, title: String, status: String) {
+        printPages = listOf(composed)
+        f<android.widget.LinearLayout>(R.id.previewCard).visibility = View.VISIBLE
+        f<TextView>(R.id.previewTitle).text = title
+        showPage(0); setCopies(1)
+        statusText.text = status
+    }
+
+    /** 相机拍照返回的缩略图(不带EXTRA_OUTPUT时系统塞进extras["data"]) */
+    private fun cameraBitmap(data: Intent?): Bitmap? = data?.extras?.get("data") as? Bitmap
+
+    /** 证件拍照结果(G3): 正面→续拍反面→合成; 单面证件→裁剪直接入版 */
+    private fun handleCertCamera(requestCode: Int, data: Intent?) {
+        val bmp = cameraBitmap(data)
+        if (bmp == null) { statusText.text = "❌ 未获取到照片"; return }
+        val type = CertTable.ALL.getOrElse(certTypeIdx) { CertTable.ALL[0] }
+        when (requestCode) {
+            REQ_CERT_CAM_FRONT -> {
+                pendingCertFront = bmp
+                toast("再拍${type.name}反面")
+                if (!launchCamera(REQ_CERT_CAM_BACK)) pendingCertFront = null
+            }
+            REQ_CERT_CAM_BACK -> {
+                val front = pendingCertFront
+                pendingCertFront = null
+                if (front == null) { statusText.text = "❌ 正面照片丢失, 请重新拍照"; return }
+                try {
+                    showCertPages(PrintEngine.composeCertificate(front, bmp, type),
+                        "${type.name}打印 (正反合成)", "${type.name}已合成, 可直接打印")
+                } catch (e: Exception) { statusText.text = "❌ ${e.message}" }
+            }
+            REQ_CERT_CAM_ONE -> {
+                try {
+                    showCertPages(PrintEngine.cropCertFace(bmp, type),
+                        "${type.name}打印", "${type.name}已裁剪(${type.outX}×${type.outY}), 可直接打印")
+                } catch (e: Exception) { statusText.text = "❌ ${e.message}" }
+            }
+        }
+    }
+
+    /** WiFi二维码拍照结果(D2): 后台ZXing解码 → 解析WIFI:串 → 自动填入配网表单;
+     *  写入有失联风险, 仍由用户核对后点"写入WiFi配置"确认 */
+    private fun handleWifiQrCamera(data: Intent?) {
+        val bmp = cameraBitmap(data)
+        if (bmp == null) { toast("未获取到照片"); return }
+        statusText.text = "解析二维码…"
+        Thread {
+            val content = WifiQr.decodeText(bmp)?.let { WifiQr.parseWifi(it) }
+            runOnUiThread {
+                if (content == null) {
+                    statusText.text = "❌ 未识别到WiFi二维码(请靠近重拍, 或改手动输入)"
+                    return@runOnUiThread
+                }
+                f<EditText>(R.id.newSSID).setText(content.ssid)
+                f<EditText>(R.id.newPass).setText(content.password)
+                f<Spinner>(R.id.wifiEncSpinner).setSelection(encSpinnerPos(content.encryption))
+                statusText.text = "✅ 已填入\"${content.ssid}\", 核对后点写入WiFi配置"
+            }
+        }.start()
+    }
+
+    /** 帧加密码 → 加密下拉位(-1兜底WPA2) */
+    private fun encSpinnerPos(encryption: Int): Int =
+        encFrameBySpinnerPos.indexOf(encryption).takeIf { it >= 0 } ?: 0
 }

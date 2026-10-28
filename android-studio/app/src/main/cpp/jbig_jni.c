@@ -10,21 +10,22 @@ static void out_cb(unsigned char *start, size_t len, void *priv) {
     memcpy(b->d + b->n, start, len); b->n += len;
 }
 
-/* bitmap: 5120宽(640B/行)×h行的1bpp位图 → JBIG BIE字节 */
+/* bitmap: w宽(w/8 B/行)×h行的1bpp位图 → JBIG BIE字节 (A8质量档: 标准=300dpi 2560宽) */
 JNIEXPORT jbyteArray JNICALL
-Java_com_zml_m7208w_PrintEngine_jbigEncode(JNIEnv *env, jobject thiz, jbyteArray bitmap, jint h) {
+Java_com_zml_m7208w_PrintEngine_jbigEncode(JNIEnv *env, jobject thiz, jbyteArray bitmap, jint w, jint h) {
     (void)thiz;
     jsize n = (*env)->GetArrayLength(env, bitmap);
     unsigned char *rows = (unsigned char*)(*env)->GetByteArrayElements(env, bitmap, NULL);
     buf b = {0};
     struct jbg_enc_state s;
     unsigned char *rp[1] = { rows };
-    jbg_enc_init(&s, 5120, h, 1, rp, out_cb, &b);
+    jbg_enc_init(&s, w, h, 1, rp, out_cb, &b);
     jbg_enc_layers(&s, 0);
     jbg_enc_options(&s, 0, 0x340, 128, 8, 0);  /* MX=8: 固件1.3.00实证配方(t5) */
     jbg_enc_out(&s);
     jbg_enc_free(&s);
     (*env)->ReleaseByteArrayElements(env, bitmap, rows, JNI_ABORT);
+    (void)n;
     jbyteArray ret = (*env)->NewByteArray(env, b.n);
     (*env)->SetByteArrayRegion(env, ret, 0, b.n, (const jbyte*)b.d);
     free(b.d);

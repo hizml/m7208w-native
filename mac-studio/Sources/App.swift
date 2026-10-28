@@ -5,6 +5,7 @@ import AppKit
 @main
 struct M7208WApp: App {
     @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     init() {
         signal(SIGPIPE, SIG_IGN)   // 网段扫描/打印机RST时send()会SIGPIPE杀进程(10-18实测退出码141)
     }
@@ -14,6 +15,24 @@ struct M7208WApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 760, minHeight: 580)
         }
+    }
+}
+
+/// 点叉关窗口后从Dock重开窗口(10-28用户报bug: 点叉→Dock点图标无反应)
+/// SwiftUI WindowGroup 在所有窗口关闭后不会自动重建窗口——这是根本原因
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            // 方案: 关闭最后一个窗口时退出App(用户点叉=想退出, Dock点=重新启动)
+            // 这是最可靠的方案, 不依赖SwiftUI窗口重建的脆弱行为
+            sender.terminate(self)
+        }
+        return true
+    }
+
+    /// 最后一个窗口关闭时退出App(与点Cmd+W行为一致)
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
     }
 }
 

@@ -62,6 +62,20 @@
             <CheckBox android:id="@+id/duplexChk" android:layout_width="wrap_content"
                 android:layout_height="wrap_content" android:text="双面(手动翻纸)" android:textSize="13sp"/>
         </LinearLayout>
+        <!-- 打印质量档(A8): 精细=默认/标准=降JBIG分辨率/Graphics/Text, 原厂paper_qulity文案 -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="质量" android:textSize="13sp"/>
+            <Spinner android:id="@+id/qualityPSpinner" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+            <!-- 设置档(A9): 我的打印1/2/3 快速载入+保存 -->
+            <Spinner android:id="@+id/profilePSpinner" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+        <Button android:id="@+id/saveProfileBtn" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="💾 保存当前设置到所选档位"
+            android:textSize="13sp" android:layout_marginTop="2dp"/>
         <!-- 任意缩放: SeekBar 25%~400% 连续可调; "适应纸面"=100% -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:gravity="center_vertical">
