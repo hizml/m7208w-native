@@ -188,11 +188,12 @@ class MainActivity : Activity() {
 
     /// 卡纸状态码 → 原厂引导GIF(三组动画按卡纸位置归类: 整张取出/缺纸加纸/后端处理)
     private val jamGuideGifs = mapOf(
-        0xBC to R.raw.jam_pager_full_1,     // 纸残留 → 前盖抬杆取整张
-        0xBD to R.raw.jam_pager_empty_1,    // 未进纸 → 纸盒加纸
-        0xBE to R.raw.jam_pager_full_1,     // 对位卡纸 → 前盖取整张
-        0xBF to R.raw.jam_pager_backend_1,  // 内部卡纸 → 后端处理
-        0xC0 to R.raw.jam_pager_backend_1)  // 出口卡纸 → 后端处理
+        // 原厂7个卡纸GIF全用: 同一位置的多步引导取第一步GIF, 弹窗内容含步骤文案
+        0xBC to R.raw.jam_pager_full_1,     // 纸残留(3步: 抬前盖取整张) → full_1
+        0xBD to R.raw.jam_pager_empty_1,    // 未进纸(2步: 检查纸盒) → empty_1
+        0xBE to R.raw.jam_pager_full_2,     // 对位卡纸(3步: 前盖取对位辊处纸) → full_2(与BC区分)
+        0xBF to R.raw.jam_pager_backend_1,  // 内部卡纸(3步: 后盖处理) → backend_1
+        0xC0 to R.raw.jam_pager_backend_2)  // 出口卡纸(3步: 出口处取纸) → backend_2(与BF区分)
 
     /** 命中卡纸张(0xBC..0xC0)→主线程弹对应原厂GIF引导; 其余状态码不弹 */
     private fun showJamGuideIfNeeded(code: Int) {
@@ -416,16 +417,39 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 启动系统相机(公共入口): 无可用相机应用时不发Intent直接提示 */
+    /** 拍照输出临时文件: 全尺寸JPEG存cache, 路径用requestCode索引 */
+    private var certCameraFile: java.io.File? = null
+    private val certCameraLock = Any()
+
+    /** 启动系统相机(公共入口): 全尺寸JPEG输出到cache文件(不用缩略图, 原厂CameraActivity等价)
+     *  零依赖方案: 不用FileProvider, 直接传file:// URI(仅系统相机进程可读, Android 7+限制不适用) */
     private fun launchCamera(requestCode: Int): Boolean {
         val i = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         if (i.resolveActivity(packageManager) == null) {
             toast("无可用相机应用"); return false
         }
+        // 创建cache文件并用EXTRA_OUTPUT指定全尺寸输出
+        val dir = java.io.File(cacheDir, "cert_camera").apply { mkdirs() }
+        val f = java.io.File(dir, "cert_${System.currentTimeMillis()}.jpg")
+        synchronized(certCameraLock) { certCameraFile = f }
+        // Android 7+ 对 file:// URI 有 FileUriExposedException
+        // 但系统相机是受信进程, 用 FileProvider 的 content:// 是标准做法
+        // 零依赖替代: 用 MediaStore插入一条记录获取content URI
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "cert_${System.currentTimeMillis()}.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/M7208W证件")
+        }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri != null) {
+            pendingCameraUri = uri
+            i.putExtra(MediaStore.EXTRA_OUTPUT, uri)
+        }
         @Suppress("DEPRECATION")
         startActivityForResult(i, requestCode)
         return true
     }
+    private var pendingCameraUri: Uri? = null
 
     /** 预览全屏放大: 复用当前预览位图, 黑底居中, 点任意处关闭 */
     private fun showFullscreenPreview() {
@@ -1391,7 +1415,29 @@ class MainActivity : Activity() {
     }
 
     /** 相机拍照返回的缩略图(不带EXTRA_OUTPUT时系统塞进extras["data"]) */
-    private fun cameraBitmap(data: Intent?): Bitmap? = data?.extras?.get("data") as? Bitmap
+    /** 拍照位图获取: 优先从MediaStore全尺寸URI读(证件打印需要高分辨率), 兜底缩略图 */
+    private fun cameraBitmap(data: Intent?): Bitmap? {
+        // 全尺寸路径: launchCamera通过EXTRA_OUTPUT将照片写入MediaStore, 拍完从这里读
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (uri != null) {
+            try {
+                val src = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it, null, src)
+                }
+                // 证件打印最大需要952×1362, 限制解码尺寸防OOM(>2000px降采样)
+                var sample = 1
+                while (src.outWidth / sample > 2000 || src.outHeight / sample > 2000) sample *= 2
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                contentResolver.openInputStream(uri)?.use {
+                    return android.graphics.BitmapFactory.decodeStream(it, null, opts)
+                }
+            } catch (_: Exception) { /* 降级到缩略图 */ }
+        }
+        // 兜底: 系统相机返回的缩略图(小图, 非证件打印理想, 但聊胜于无)
+        return data?.extras?.get("data") as? Bitmap
+    }
 
     /** 证件拍照结果(G3): 正面→续拍反面→合成; 单面证件→裁剪直接入版 */
     private fun handleCertCamera(requestCode: Int, data: Intent?) {

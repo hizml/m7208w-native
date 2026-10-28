@@ -155,10 +155,11 @@ object PrintEngine {
     // 精细 spCode=0 即维持出厂默认字节); rasterDpi 决定光栅分辨率:
     // 精细=600dpi默认, 标准=降低JBIG分辨率(300dpi光栅, 数据量约1/4)
     enum class PrintQuality(val label: String, val spCode: Int, val rasterDpi: Int) {
-        FINE("精细", 0x00, 600),
-        STANDARD("标准", 0x01, 300),
-        GRAPHICS("Graphics", 0x02, 600),
-        TEXT("Text", 0x03, 600)
+        FINE("精细", 0x00, 600),          // quality=5, RES600全速光栅
+        STANDARD("标准", 0x01, 300),       // quality=2, ×2.0倍率, 降dpi节省传输
+        GRAPHICS("Graphics", 0x02, 600),   // inputSrcMode=0图片路径, 图形优化
+        TEXT("Text", 0x03, 600),           // inputSrcMode=3文本路径, 文本锐化
+        MANUAL("手动", 0x04, 600)          // inputSrcMode=0+跳过自动调色: 浓度/省墨完全用用户值
     }
 
     /** N合1合成: pages按 n×n 网格拼到一张白底A4(每格等比缩放); 公开给手动双面分面用 */
