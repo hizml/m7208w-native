@@ -40,6 +40,16 @@
     </LinearLayout>
 
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="管理员密码" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <EditText android:id="@+id/adminOldPwd" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:hint="当前密码(默认888888)"
+        android:inputType="textPassword"/>
+    <EditText android:id="@+id/adminNewPwd" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:hint="新密码"
+        android:inputType="textPassword"/>
+    <Button android:id="@+id/adminPwdBtn" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="修改管理员密码" android:textSize="13sp"/>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:text="设备" android:textSize="15sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal">

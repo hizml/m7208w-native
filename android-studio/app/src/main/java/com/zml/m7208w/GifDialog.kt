@@ -29,6 +29,24 @@ object GifDialog {
         dialog.show()
     }
 
+    /** 弹出GIF引导+双按钮(确认/取消); 用于需要用户操作后继续的引导(如双面翻纸后继续打背面) */
+    fun showWithActions(
+        activity: Activity, gifRes: Int, title: String, message: String,
+        positiveText: String, onPositive: (android.content.DialogInterface, Int) -> Unit,
+        negativeText: String? = null, onNegative: (android.content.DialogInterface, Int) -> Unit = { _, _ -> }
+    ) {
+        if (activity.isFinishing || activity.isDestroyed) return
+        val gifView = GifView(activity, gifRes)
+        val builder = AlertDialog.Builder(activity)
+            .setTitle(title)
+            .setMessage(message)
+            .setView(gifView)
+            .setPositiveButton(positiveText) { d, w -> onPositive(d, w) }
+        if (negativeText != null) builder.setNegativeButton(negativeText) { d, w -> onNegative(d, w) }
+        val dialog = builder.create()
+        dialog.show()
+    }
+
     /** GIF逐帧渲染视图: Movie按系统时钟取帧, 播到片尾自动回绕循环; 解码失败则为零尺寸隐藏 */
     @Suppress("DEPRECATION")   // Movie自API28标记弃用, 但各版本均可用且零三方依赖
     private class GifView(context: Context, gifRes: Int) : View(context) {

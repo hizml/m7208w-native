@@ -385,7 +385,7 @@ class MainActivity : Activity() {
                 showCertSourceDialog(CertTable.ALL[which])
             }
             .setNegativeButton("取消", null)
-            .show()
+            
     }
 
     /** 证件图片来源: 拍照(零依赖系统相机Intent) / 相册 */
@@ -396,7 +396,7 @@ class MainActivity : Activity() {
                 if (which == 0) launchCertCamera(cert) else pickCertFromGallery(cert)
             }
             .setNegativeButton("取消", null)
-            .show()
+            
     }
 
     /** 系统相机拍照(G3): 不带EXTRA_OUTPUT, 缩略图Bitmap经extras返回, 直接进裁剪/合成流程 */
@@ -438,7 +438,7 @@ class MainActivity : Activity() {
             setOnClickListener { dlg.dismiss() }
         }
         dlg.setContentView(iv)
-        dlg.show()
+        dlg
     }
 
     private fun pick(mime: String, code: Int, title: String) {
@@ -644,11 +644,9 @@ class MainActivity : Activity() {
                     if (back.isEmpty()) {
                         statusText.text = "✅ 单面内容已发送"; unlockWhenIdle(); return@runOnUiThread
                     }
-                    android.app.AlertDialog.Builder(this)
-                        .setTitle("双面打印 — 请翻纸")
-                        .setMessage("正面共 $printCopies 份已发送。待出纸完成后, 请将纸堆整体翻面(保持页脚方向一致)放回纸盒, 再继续打印背面。")
-                        .setCancelable(false)
-                        .setPositiveButton("继续打印背面") { _, _ ->
+                                        GifDialog.showWithActions(this, R.raw.print_double_step_2, "双面打印 — 请翻纸",
+                        "正面共 $printCopies 份已发送。请翻面放回纸盒后继续。",
+                        "继续打印背面", { _, _ ->
                             statusText.text = "双面打印: 背面处理中…"
                             Thread {
                                 try {
@@ -664,11 +662,10 @@ class MainActivity : Activity() {
                                     runOnUiThread { busy(false); statusText.text = "❌ ${e.message}" }
                                 }
                             }.start()
-                        }
-                        .setNegativeButton("只印正面") { _, _ ->
+                        },
+                        "只印正面", { _, _ ->
                             busy(false); statusText.text = "已取消背面(正面作业不受影响)"
-                        }
-                        .show()
+                        })
                 }
             } catch (e: Throwable) {
                 runOnUiThread { busy(false); statusText.text = "❌ ${e.message}" }
@@ -708,6 +705,8 @@ class MainActivity : Activity() {
             // 证件复印: 原厂第一步GIF引导(放置正面), 弹窗不阻塞命令
             if (nup == NupMode.ID_CARD)
                 GifDialog.show(this, R.raw.copy_idcard_step_1, "身份证复印", "请放置正面 — 提示后翻面再放背面")
+            else if (nup == NupMode.TWO_UP)
+                GifDialog.show(this, R.raw.copy_nin1_step_1, "2合1复印", "请放入原稿 — 两页将合印为一张")
             statusText.text = "复印命令发送中…"
             Thread {
                 try {
@@ -715,6 +714,8 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (ok) {
                             statusText.text = "✅ 复印已受理 (${o.copies}份) — 完成前请勿扫描"
+                        if (nup == NupMode.ID_CARD)
+                            GifDialog.show(this@MainActivity, R.raw.copy_idcard_step_2, "身份证复印", "正面完成 — 请翻面放背面, 再按一次复印")
                             unlockWhenIdle()   // 轮询真实状态解锁(替代90秒死锁)
                         } else { busy(false); statusText.text = "❌ 复印被拒绝" }
                     }
@@ -982,7 +983,7 @@ class MainActivity : Activity() {
                             f<EditText>(R.id.newSSID).setText(nets[which])
                         }
                         .setNegativeButton("关闭", null)
-                        .show()
+                        
                 }
             }.start()
         }
@@ -1003,7 +1004,7 @@ class MainActivity : Activity() {
                     }.start()
                 }
                 .setNegativeButton("取消", null)
-                .show()
+                
         }
         f<Button>(R.id.tonerReadBtn).setOnClickListener { tonerAction(0) }
         f<Button>(R.id.tonerContBtn).setOnClickListener { tonerAction(1) }
@@ -1012,7 +1013,7 @@ class MainActivity : Activity() {
                 .setTitle("重置墨粉计数")
                 .setMessage("重置后打印机将按新硒鼓计数。确认执行?")
                 .setPositiveButton("重置") { _, _ -> tonerAction(2) }
-                .setNegativeButton("取消", null).show()
+                .setNegativeButton("取消", null)
         }
         f<Button>(R.id.rebootBtn).setOnClickListener {
             android.app.AlertDialog.Builder(this)
@@ -1024,9 +1025,21 @@ class MainActivity : Activity() {
                         runOnUiThread { statusText.text = if (ok) "重启指令已发, 约3分钟" else "❌ 发送失败" }
                     }.start()
                 }
-                .setNegativeButton("取消", null).show()
+                .setNegativeButton("取消", null)
         }
         f<Button>(R.id.refreshBtn).setOnClickListener { refreshStatus() }
+        // 管理员密码修改(原厂E8, 10-28补齐)
+        f<Button>(R.id.adminPwdBtn).setOnClickListener {
+            val oldP = f<EditText>(R.id.adminOldPwd).text.toString()
+            val newP = f<EditText>(R.id.adminNewPwd).text.toString()
+            if (newP.length < 6) { toast("新密码至少6位"); return@setOnClickListener }
+            Thread {
+                val ok = AdminPassword.setAdminPassword(ip(), oldP, newP)
+                runOnUiThread {
+                    statusText.text = if (ok != null) "✅ 密码已修改(返回码$ok)" else "❌ 修改失败(当前密码错误?)"
+                }
+            }.start()
+        }
         // 关于区: 运行时读真实版本号(10-19用户要求, 版本不再写死)
         val ver = try {
             val pi = packageManager.getPackageInfo(packageName, 0)
@@ -1055,7 +1068,7 @@ class MainActivity : Activity() {
                 .setPositiveButton("复位") { _, _ ->
                     runSetting("复位感光鼓") { settingErrText(DeviceMaintenance.drumReset(ip())) }
                 }
-                .setNegativeButton("取消", null).show()
+                .setNegativeButton("取消", null)
         }
         f<Button>(R.id.fuserResetBtn).setOnClickListener {
             runSetting("清除定影错误") { settingErrText(DeviceMaintenance.fuserReset(ip())) }
@@ -1304,7 +1317,7 @@ class MainActivity : Activity() {
                 "第三步: 1秒内连续按机器电源按钮三次，自动打印出移动设备连接打印机指南，按指南处理。")
             .setPositiveButton("重新搜索") { _, _ -> findPrinter() }
             .setNegativeButton("取消", null)
-            .show()
+            
     }
 
     // ==================== 退出确认(F5) ====================
@@ -1319,7 +1332,7 @@ class MainActivity : Activity() {
             .setMessage("应用关闭后，扫描图片将会被删除，是否关闭，请确认!")
             .setPositiveButton("是") { _, _ -> @Suppress("DEPRECATION") finish() }
             .setNegativeButton("否", null)
-            .show()
+            
     }
 
     // ==================== 文件选择/相机回调 ====================

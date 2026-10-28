@@ -10,8 +10,8 @@ android {
         applicationId = "com.zml.m7208w"
         minSdk = 24
         targetSdk = 35
-        versionCode = 13
-        versionName = "8.0"
+        versionCode = 14
+        versionName = "8.1"
     }
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
